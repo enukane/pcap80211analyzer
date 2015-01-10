@@ -469,7 +469,7 @@ end
     print "Total #AP: #{aps.length}\n"
   end
 
-  def execute_uniq_ap_per_band_num
+  def execute_uniq_ap_num_per_band
     ap5 = []
     ap24 = []
     tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
@@ -496,8 +496,6 @@ end
     print "2.4GHz, #{uniq24.length}, #{rate24}\n"
     print "5GHz, #{uniq5.length}, #{rate5}\n"
     print "both, #{uniq_com.length}, #{rate_com}\n"
-    print "\n\n"
-    print "#{uniq_com}"
   end
 
   def execute_uniq_ap_oui_histogram
@@ -524,7 +522,7 @@ end
     print "Total #STA: #{stas.length}\n"
   end
 
-  def execute_uniq_sta_per_band_num
+  def execute_uniq_sta_num_per_band
     sta5 = []
     sta24 = []
     tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
@@ -552,8 +550,6 @@ end
     print "2.4GHz, #{uniq24.length}, #{rate24}\n"
     print "5GHz, #{uniq5.length}, #{rate5}\n"
     print "both, #{uniq_com.length}, #{rate_com}\n"
-    print "\n\n"
-    print "#{uniq_com}"
   end
 
   def execute_subtype_histogram
@@ -625,7 +621,7 @@ end
     print "Frame Num, #{ary.length}\n"
   end
 
-  def execute_frame_per_band_num
+  def execute_frame_num_per_band
     frame5 = 0
     frame24 = 0
     tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
@@ -681,7 +677,7 @@ end
     print "DataFrameNum, #{frame_num}\n"
   end
 
-  def execute_data_frame_per_band_num
+  def execute_data_frame_num_per_band
     frame5 = 0
     frame24 = 0
     tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
@@ -702,7 +698,7 @@ end
     print "5GHz, #{frame5}, #{rate5}\n"
   end
 
-  def execute_mgmt_frame_per_band_num
+  def execute_mgmt_frame_num_per_band
     frame5 = 0
     frame24 = 0
     tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
