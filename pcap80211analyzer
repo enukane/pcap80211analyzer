@@ -1,0 +1,964 @@
+#!/usr/bin/ruby
+
+$:.unshift File.dirname(__FILE__)
+
+require "optparse"
+require "ouisearch.rb"
+
+class Histogram < Hash
+  def initialize
+    super
+    @uniq = false
+  end
+
+  def add key, density=1
+    self[key] = 0 if self[key] == nil
+    self[key] += density
+  end
+
+  def add_uniq key, elm, force_uniq=false
+    @uniq = true
+    self[key] = [] unless self[key].is_a?(Array)
+    if force_uniq == true
+      self[key] << elm unless self[key].include?(elm)
+    else
+      self[key] << elm
+    end
+  end
+
+  def keep_uniq
+    self.each do |k, v|
+      self[k] = v.uniq
+    end
+  end
+
+  def fill ary, value=0
+    ary.each do |k|
+      self[k] = value if self[k] == nil
+    end
+  end
+
+  def to_csv
+    str = ""
+    self.each do |key, value|
+      str += "#{key},#{@uniq ? value.length : value}\n"
+    end
+    return str
+  end
+
+  def to_csv_key_sorted keyfilter=nil
+    str = ""
+    self.to_a.sort{|a, b| a[0] <=> b[0]}.each do |key, value|
+      if keyfilter and keyfilter.is_a?(Hash)
+        str += "#{keyfilter[key] ? keyfilter[key] : key},#{@uniq ? value.length : value}\n"
+      else
+        str += "#{key},#{@uniq ? value.length : value}\n"
+      end
+    end
+    return str
+  end
+
+  def to_csv_value_sorted keyfilter=nil
+    str = ""
+    self.to_a.sort{|a, b| a[1] <=> b[1]}.each do |key, value|
+      if keyfilter and keyfilter.is_a?(Hash)
+        str += "#{keyfilter[key] ? keyfilter[key] : key},#{value}\n"
+      else
+        str += "#{key},#{value}\n"
+      end
+    end
+    return str
+  end
+end
+
+NUM2TYPENAME = {
+  # management
+  0x00  => "Association Request",
+  0x01  => "Association Response",
+  0x02  => "Reassociation Request",
+  0x03  => "Reassociation Response",
+  0x04  => "Probe Request",
+  0x05  => "Probe Response",
+  0x08  => "Beacon",
+  0x09  => "ATIM",
+  0x0a  => "Disassociation",
+  0x0b  => "Authentication",
+  0x0c  => "Deauthentication",
+  0x0d  => "Action",
+  # control
+  0x18  => "Block Ack Request",
+  0x19  => "Block Ack",
+  0x1a  => "PS-Poll",
+  0x1b  => "RTS",
+  0x1c  => "CTS",
+  0x1d  => "ACK",
+  0x1e  => "CF-end",
+  0x1f  => "CF-end + CF-ack",
+  # data
+  0x20  => "Data",
+  0x21  => "Data + CF-ack",
+  0x22  => "Data + CF-poll",
+  0x23  => "Data + CF-ack + CF-poll",
+  0x24  => "Null",
+  0x25  => "CF-ack",
+  0x26  => "CF-poll",
+  0x27  => "CF-ack + CF-poll",
+  0x28  => "QoS data",
+  0x29  => "QoS data + CF-ack",
+  0x2a  => "QoS data + CF-poll",
+  0x2b  => "QoS data + CF-ack + CF-poll",
+  0x2c  => "QoS Null",
+  0x2d  => "Reserved",
+  0x2e  => "QoS + CF-poll (no data)",
+  0x2f  => "QoS + CF-ack (nodata)",
+}
+
+def num2type(num)
+  case (num & 0xf0) >> 4
+  when 0
+    return "Management"
+  when 1
+    return "Control"
+  when 2
+    return "Data"
+  end
+  return "Unknown"
+end
+
+FREQ2CHAN = {
+  0     => 0, # why radiotap.channel.freq can be 0?
+  # 2.4GHz
+  2412  => 1,
+  2417  => 2,
+  2422  => 3,
+  2427  => 4,
+  2432  => 5,
+  2437  => 6,
+  2442  => 7,
+  2447  => 8,
+  2452  => 9,
+  2457  => 10,
+  2462  => 11,
+  2467  => 12,
+  2472  => 13,
+#  2484  => 14,
+
+  # japan client only
+  5170  => 34,
+  5190  => 38,
+  5210  => 42,
+  5230  => 46,
+
+  # W52
+  5180  => 36,
+  5200  => 40,
+  5220  => 44,
+  5240  => 48,
+
+  # W53
+  5260  => 52,
+  5280  => 56,
+  5300  => 60,
+  5320  => 64,
+
+  # W56
+  5500  => 100,
+  5520  => 104,
+  5540  => 108,
+  5560  => 112,
+  5580  => 116,
+  5600  => 120,
+  5620  => 124,
+  5640  => 128,
+  5660  => 132,
+  5680  => 136,
+  5700  => 140,
+
+  # 802.11j
+  4920  => 184,
+  4940  => 188,
+  4960  => 192,
+  4980  => 194,
+}
+CHANNELS=FREQ2CHAN.values
+
+class Pcap80211Analyzer
+  OUTPUTDIR="output"
+
+  TYPE_ADDR_SUBTYPE="addr_n_subtype"
+  TYPE_RADIOTAP="radiotap"
+
+  MIN=60
+  HOUR=MIN*60
+  DAY=24*HOUR
+  SUFFIX = { :day => "d", :hour => "h", :min => "m", :sec => "s" }
+
+  def initialize args={}
+    @pcappath = args[:pcappath]
+    @pcapbasename = File.basename(@pcappath) if @pcappath
+    @time = args[:time] || false
+    @force = args[:force] || false
+    @debug = args[:debug] || false
+
+    @ouisearch = OuiSearch.new(:reload => false, :debug => @debug)
+
+    @cache = {}
+
+    check
+  end
+
+  def check
+    if @pcappath == nil or @pcappath == ""
+      raise "no pcap file specified"
+    end
+
+    unless system("tshark -h > /dev/null")
+      raise "tshark not found"
+    end
+
+    # create or check output directory
+    check_n_generate_output_dir
+  end
+
+  def check_n_generate_output_dir
+    path = File.expand_path(File.dirname($0))
+    parentpath = path + "/" + OUTPUTDIR
+    outputpath = path + "/" + OUTPUTDIR + "/" + @pcapbasename
+
+    unless Dir.exists?(parentpath)
+      Dir.mkdir(parentpath)
+    end
+
+    unless Dir.exists?(outputpath)
+      Dir.mkdir(outputpath) # do not handle exception
+    end
+
+    @outputpath = outputpath
+  end
+
+  def dp str
+    print "#{str}\n" if @debug
+  end
+
+  def sec_to_s sec
+    date = { :day => 0, :hour => 0, :min => 0, :sec => 0 }
+    date[:day] = sec / DAY
+    sec %= DAY
+    date[:hour] = sec / HOUR
+    sec %= HOUR
+    date[:min] = sec / MIN
+    sec %= MIN
+    date[:sec] = sec
+
+    str = ""
+    [:day, :hour, :min, :sec].each do |sym|
+      str += "#{date[sym]}#{SUFFIX[sym]}" if date[sym] > 0
+    end
+    return str
+  end
+
+  # cache op
+  def get_cache_path type
+    raise "type is invalid (#{type})" if type == nil or type == ""
+    return @outputpath + "/" + type
+  end
+
+  def put_cache_data type, data
+    path = get_cache_path(type)
+    File.open(path, "w") do |file|
+      file.write(data)
+    end
+    @cache[type] = data
+    return true
+  end
+
+  def get_cache_data type
+    if @cache[type] != nil
+      return @cache[type]
+    end
+
+    data = nil
+    path = get_cache_path(type)
+    unless File.exists?(path)
+      return nil
+    end
+    File.open(path) do |file|
+      data = file.read
+    end
+    @cache[type] = data
+    return data
+  end
+
+  # tshark
+  def do_tshark type, options
+    unless @force
+      cached = get_cache_data(type)
+      return cached if cached
+    end
+
+    io = IO.popen("tshark -E separator=, #{options} -T fields -r #{@pcappath}")
+    data = io.read
+
+    put_cache_data(type, data)
+    return data
+  end
+
+  # sub utilities
+  def tshark_addr_n_subtype
+    return do_tshark(TYPE_ADDR_SUBTYPE,
+                     "-e 'wlan.ta' -e 'wlan.sa' -e 'wlan.ra' -e 'wlan.fc.type_subtype'")
+  end
+
+  def tshark_addr_n_subtype_to_a
+    ary = []
+    tshark_addr_n_subtype().split("\n").each do |line|
+      ta, sa, ra, st = line.split(",")
+      ary << {
+        :ta => ta,
+        :sa => sa,
+        :ra => ra,
+        :st => st.to_i,
+      }
+    end
+    return ary
+  end
+
+  def tshark_addr_n_subtype_each
+    tshark_addr_n_subtype_to_a.each do |hash|
+      yield(hash[:ta], hash[:sa], hash[:ra], hash[:st])
+    end
+  end
+
+  def tshark_radiotap
+    return do_tshark(TYPE_RADIOTAP,
+                     " -e 'frame.time_epoch'" +
+                     " -e 'frame.len'" +
+                     " -e 'radiotap.length'" +
+                     " -e 'radiotap.datarate'" +
+                     " -e 'radiotap.dbm_antsignal'" +
+                     " -e 'radiotap.channel.freq'" +
+                     " -e 'wlan.fc.type_subtype'" +
+                     " -e 'wlan.ta'" +
+                     " -e 'wlan.sa'" +
+                     " -e 'wlan.ra'"
+                    )
+  end
+
+  def tshark_radiotap_to_a
+    ary = []
+    tshark_radiotap().split("\n").each do |line|
+      time, framelen, taplen, rate, signal, freq, st, ta, sa, ra = line.split(",")
+      ary << {
+        :time     => time.to_i,
+        :framelen => framelen.to_i,
+        :taplen   => taplen.to_i,
+        :rate     => rate.to_i,
+        :signal   => signal.to_i,
+        :chan     => FREQ2CHAN[freq.to_i],
+        :st       => st.to_i,
+        :ta       => ta,
+        :sa       => sa,
+        :ra       => ra,
+      }
+    end
+
+    return ary
+  end
+
+  def tshark_radiotap_each
+    tshark_radiotap_to_a.each do |hash|
+      yield(
+        hash[:time],
+        hash[:framelen],
+        hash[:taplen],
+        hash[:rate],
+        hash[:signal],
+        hash[:chan],
+        hash[:st],
+        hash[:ta],
+        hash[:sa],
+        hash[:ra]
+      )
+    end
+  end
+
+  # util specific
+  def uniq_aps
+    aps = []
+    tshark_addr_n_subtype_each do |ta, sa, ra, st|
+      if st == 8 or st == 5
+        aps << ta
+      end
+    end
+    return aps.sort.uniq
+  end
+
+  def uniq_stas
+    stas = []
+    tshark_addr_n_subtype_each do |ta, sa, ra, st|
+      stas << ta
+      stas << sa
+      stas << ra
+    end
+    return stas.sort.uniq
+  end
+
+  # execute
+  def execute args
+    cmd = args.shift
+    @args = args
+    func = "execute_" + cmd
+    methods = self.methods - Object.methods
+
+    unless methods.include?(func.to_sym)
+      raise "no such command (#{cmd})"
+    end
+
+    before = Time.now if @time
+    send(func)
+    print("\nLatest execution time: #{Time.now - before}\n") if @time
+  end
+
+  # execute_subcommand
+def execute_help
+  execute_list
+end
+  def execute_list
+    methods = self.methods - Object.methods
+    cmds = []
+    methods.each do |func|
+      match = func.to_s.match(/^execute_(.+)$/)
+      next unless match
+      cmds << match[1]
+    end
+
+    print "Supported Commands:\n"
+    cmds.sort.each do |cmd|
+      print "- #{cmd}\n"
+    end
+  end
+
+  def execute_all
+    methods = self.methods - Object.methods
+    cmds = []
+    methods.each do |func|
+      match = func.to_s.match(/^execute_(.+)$/)
+      next unless match
+      next if match[1] == "all" or match[1] == "list"
+      cmds << match[1]
+    end
+
+    print "<<< EXECUTE ALL COMMANDS >>>\n\n"
+    cmds.sort.each do |cmd|
+      print "< EXECUTE #{cmd} >\n"
+      send("execute_" + cmd)
+      print "\n\n"
+    end
+    print "<<< EXECUTE DONE >>>\n"
+  end
+
+  def execute_uniq_ap
+    aps = uniq_aps()
+    aps.each do |addr|
+      print "#{addr}\n"
+    end
+  end
+
+  def execute_uniq_ap_num
+    aps = uniq_aps()
+    print "Total #AP: #{aps.length}\n"
+  end
+
+  def execute_uniq_ap_per_band_num
+    ap5 = []
+    ap24 = []
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      unless st == 8 or st == 5
+        next
+      end
+      if chan.to_i > 13
+        ap5 << ta
+      else
+        ap24 << ta
+      end
+    end
+
+    uniq5 = ap5.sort.uniq
+    uniq24 = ap24.sort.uniq
+    uniq_com = uniq5 & uniq24
+
+    total = uniq_aps().length.to_f
+    rate24 = (uniq24.length - uniq_com.length) / total * 100
+    rate5 = (uniq5.length - uniq_com.length) / total * 100
+    rate_com = (uniq_com.length) / total * 100
+
+    print "TotalAP, #{total}, 100\n"
+    print "2.4GHz, #{uniq24.length}, #{rate24}\n"
+    print "5GHz, #{uniq5.length}, #{rate5}\n"
+    print "both, #{uniq_com.length}, #{rate_com}\n"
+    print "\n\n"
+    print "#{uniq_com}"
+  end
+
+  def execute_uniq_ap_oui_histogram
+    hist = Histogram.new
+    aps = uniq_aps()
+    aps.each do |addr|
+      oui = addr[0..7]
+      vendor = @ouisearch.execute(oui)
+      hist.add(vendor.gsub(",", ""))
+    end
+
+    print "#{hist.to_csv_value_sorted}\n"
+  end
+
+  def execute_uniq_sta
+    stas = uniq_stas()
+    stas.each do |addr|
+      print "#{addr}\n"
+    end
+  end
+
+  def execute_uniq_sta_num
+    stas = uniq_stas()
+    print "Total #STA: #{stas.length}\n"
+  end
+
+  def execute_uniq_sta_per_band_num
+    sta5 = []
+    sta24 = []
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      if chan.to_i > 13
+        sta5 << ta if ta
+        sta5 << sa if sa
+        sta5 << ra if ra
+      else
+        sta24 << ta if ta
+        sta24 << sa if sa
+        sta24 << ra if ra
+      end
+    end
+
+    uniq5 = sta5.sort.uniq
+    uniq24 = sta24.sort.uniq
+    uniq_com = uniq5 & uniq24
+
+    total = uniq_stas().length.to_f
+    rate24 = (uniq24.length - uniq_com.length) / total * 100
+    rate5 = (uniq5.length - uniq_com.length) / total * 100
+    rate_com = (uniq_com.length) / total * 100
+
+    print "TotalSTA, #{total}, 100\n"
+    print "2.4GHz, #{uniq24.length}, #{rate24}\n"
+    print "5GHz, #{uniq5.length}, #{rate5}\n"
+    print "both, #{uniq_com.length}, #{rate_com}\n"
+    print "\n\n"
+    print "#{uniq_com}"
+  end
+
+  def execute_subtype_histogram
+    hist = Histogram.new
+    tshark_addr_n_subtype_each do |ta, sa, ra, st|
+      hist.add(st)
+    end
+
+    print "#{hist.to_csv_key_sorted(NUM2TYPENAME)}\n"
+  end
+
+  def execute_subtype_24_histogram
+    hist = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next if chan > 13
+      hist.add(st)
+    end
+
+    print "#{hist.to_csv_key_sorted(NUM2TYPENAME)}\n"
+  end
+
+  def execute_subtype_5_histogram
+    hist = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next if chan < 13
+      hist.add(st)
+    end
+
+    print "#{hist.to_csv_key_sorted(NUM2TYPENAME)}\n"
+  end
+
+  def execute_uniq_sta_oui_histogram
+    hist = Histogram.new
+    stas = uniq_stas()
+    stas.each do |addr|
+      oui = addr[0..7]
+      vendor = @ouisearch.execute(oui)
+      hist.add(vendor.gsub(",", ""))
+    end
+
+    print "#{hist.to_csv_value_sorted}\n"
+  end
+
+  def execute_channel_histogram
+    hist = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      hist.add(chan)
+    end
+    hist.fill(CHANNELS)
+
+    print "#{hist.to_csv_key_sorted()}\n"
+  end
+
+  def execute_time_term
+    ary = tshark_radiotap_to_a()
+    first_time = ary[0][:time]
+    last_time = ary[-1][:time]
+    first_date = Time.at(first_time)
+    last_date = Time.at(last_time)
+    time_term = last_time - first_time
+
+    print "Start Time, #{first_time}, #{first_date.to_s}\n"
+    print "Last Time, #{last_time}, #{last_date.to_s}\n"
+    print "Time Term, #{time_term}, #{sec_to_s(time_term)}\n"
+  end
+
+  def execute_frame_num
+    ary = tshark_radiotap_to_a()
+    print "Frame Num, #{ary.length}\n"
+  end
+
+  def execute_frame_per_band_num
+    frame5 = 0
+    frame24 = 0
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      if chan.to_i > 13
+        frame5 += 1
+      else
+        frame24 += 1
+      end
+    end
+
+    total = (frame24 + frame5).to_f
+    rate5 = frame5 / total * 100.0
+    rate24 = frame24 / total * 100.0
+
+    print "TotalFrames, #{frame5+frame24}, 100\n"
+    print "2.4GHz, #{frame24}, #{rate24}\n"
+    print "5GHz, #{frame5}, #{rate5}\n"
+  end
+
+  def execute_type_histogram
+    hist = Histogram.new
+    hist24 = Histogram.new
+    hist5 = Histogram.new
+
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      type = num2type(st)
+      hist.add(type)
+      if chan.to_i > 13
+        hist5.add(type)
+      else
+        hist24.add(type)
+      end
+    end
+
+    print "#Type, Frame Num\n"
+    print "#{hist.to_csv_key_sorted()}\n\n"
+
+    print "#Type 2.4GHz, Frame Num\n"
+    print "#{hist24.to_csv_key_sorted()}\n\n"
+
+    print "#Type 5GHz, Frame Num\n"
+    print "#{hist5.to_csv_key_sorted()}\n\n"
+  end
+
+  def execute_data_frame_num
+    frame_num = 0
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      if 0x20 <= st and st < 0x30
+        frame_num += 1
+      end
+    end
+
+    print "DataFrameNum, #{frame_num}\n"
+  end
+
+  def execute_data_frame_per_band_num
+    frame5 = 0
+    frame24 = 0
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next unless 0x20 <= st and st < 0x30
+      if chan.to_i > 13
+        frame5 += 1
+      else
+        frame24 += 1
+      end
+    end
+
+    total = (frame24 + frame5).to_f
+    rate5 = frame5 / total * 100.0
+    rate24 = frame24 / total * 100.0
+
+    print "TotalDataFrames, #{frame5+frame24}, 100\n"
+    print "2.4GHz, #{frame24}, #{rate24}\n"
+    print "5GHz, #{frame5}, #{rate5}\n"
+  end
+
+  def execute_mgmt_frame_per_band_num
+    frame5 = 0
+    frame24 = 0
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next if st > 0x0d
+      if chan.to_i > 13
+        frame5 += 1
+      else
+        frame24 += 1
+      end
+    end
+
+    total = (frame24 + frame5).to_f
+    rate5 = frame5 / total * 100.0
+    rate24 = frame24 / total * 100.0
+
+    print "TotalDataFrames, #{frame5+frame24}, 100\n"
+    print "2.4GHz, #{frame24}, #{rate24}\n"
+    print "5GHz, #{frame5}, #{rate5}\n"
+  end
+
+  def execute_rate_histogram
+    hist = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      hist.add(rate)
+    end
+
+    print "#Rate, Count\n"
+    print "#{hist.to_csv_key_sorted()}\n"
+  end
+
+  def execute_rate_24_histogram
+    hist = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next if chan > 13
+      hist.add(rate)
+    end
+
+    print "#Rate, Count\n"
+    print "#{hist.to_csv_key_sorted()}\n"
+  end
+
+  def execute_rate_5_histogram
+    hist = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next if chan <= 13
+      hist.add(rate)
+    end
+
+    print "#Rate, Count\n"
+    print "#{hist.to_csv_key_sorted()}\n"
+  end
+
+  def execute_data_rate_histogram
+    hist = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      if 0x20 <= st and st < 0x30
+        hist.add(rate)
+      end
+    end
+
+    print "#Rate, Count\n"
+    print "#{hist.to_csv_key_sorted()}\n"
+  end
+
+  def execute_data_rate_24_histogram
+    hist = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next if chan > 13
+      if 0x20 <= st and st < 0x30
+        hist.add(rate)
+      end
+    end
+
+    print "#Rate, Count\n"
+    print "#{hist.to_csv_key_sorted()}\n"
+  end
+
+  def execute_data_rate_5_histogram
+    hist = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next if chan <= 13
+      if 0x20 <= st and st < 0x30
+        hist.add(rate)
+      end
+    end
+
+    print "#Rate, Count\n"
+    print "#{hist.to_csv_key_sorted()}\n"
+  end
+
+  def execute_channel_ap_histogram
+    hist = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next unless st == 0x08 or st == 0x05
+      hist.add_uniq(chan, ta)
+    end
+    hist.keep_uniq
+    hist.fill(CHANNELS, [])
+
+    print "#Channel, APs\n"
+    print "#{hist.to_csv_key_sorted}\n"
+  end
+
+  def execute_channel_sta_histogram
+    hist = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      hist.add_uniq(chan, ta)
+    end
+    hist.keep_uniq
+    hist.fill(CHANNELS, [])
+
+    print "#Channel, stations\n"
+    print "#{hist.to_csv_key_sorted}\n"
+  end
+
+  def execute_channel_sta_wo_ap_histogram
+    histap = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next unless st == 0x08 or st == 0x05
+      histap.add_uniq(chan, ta)
+    end
+    histap.keep_uniq
+    histap.fill(CHANNELS, [])
+
+    histsta = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      histsta.add_uniq(chan, ta)
+    end
+    histsta.keep_uniq
+    histsta.fill(CHANNELS, [])
+
+    histap.each do |k, v|
+      next if histsta[k] == nil or histsta[k] == []
+      histsta[k] = histsta[k] - histap[k]
+    end
+
+    print "#Channel, stations\n"
+    print "#{histsta.to_csv_key_sorted}\n"
+  end
+
+  def execute_channel_sta_data_histogram
+    hist = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      if 0x20 <= st and st < 0x30
+        hist.add_uniq(chan, ta)
+      end
+    end
+    hist.keep_uniq
+    hist.fill(CHANNELS, [])
+
+    print "#Channel, stations\n"
+    print "#{hist.to_csv_key_sorted}\n"
+  end
+
+  def execute_channel_sta_data_wo_ap_histogram
+    histap = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next unless st == 0x08 or st == 0x05
+      histap.add_uniq(chan, ta)
+    end
+    histap.keep_uniq
+    histap.fill(CHANNELS, [])
+
+    histsta = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next unless  0x20 <= st and st < 0x30
+      histsta.add_uniq(chan, ta)
+    end
+    histsta.keep_uniq
+    histsta.fill(CHANNELS, [])
+
+    histap.each do |k, v|
+      next if histsta[k] == nil or histsta[k] == []
+      histsta[k] = histsta[k] - histap[k]
+    end
+
+    print "#Channel, stations\n"
+    print "#{histsta.to_csv_key_sorted}\n"
+  end
+
+  def execute_channel_type_histogram
+    # need another hash-like thingy?
+    hist = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      type = num2type(st)
+      key = "#{chan}_#{type}"
+      hist.add(key)
+    end
+
+    hist2 = {}
+    hist.each do |k, v|
+      chan, type = k.split("_")
+      chan = chan.to_i
+      hist2[chan] = {} if hist2[chan] == nil
+      hist2[chan][type] = v
+    end
+
+    CHANNELS.each do |channel|
+      if hist2[channel] == nil
+        hist2[channel] = nil
+      end
+    end
+
+    str = "#Channel,Management,Control,Data\n"
+    hist2.keys.sort.each do |chan|
+      _hist = hist2[chan]
+      str += "#{chan},"
+      if _hist == nil
+        str += "0,0,0\n"
+      else
+        str += "#{_hist['Management']},#{_hist['Control']},#{_hist['Data']}\n"
+      end
+    end
+
+    print "#{str}\n"
+  end
+end
+
+def usage
+  puts "Usage:  pcap80211analyzer [-dfht] -r <pcapngfile> <command>"
+  puts "  -f              force cache to be generated again"
+  puts "                  removes one created in 'output' directory"
+  puts "  -h              show this help"
+  puts "  -t              measure time consumed by force reloading"
+  puts "  -r              specify target pcapng file (should be 802.11 radiotap)"
+  puts ""
+  puts "<command>"
+  puts "  list            list all available command"
+  puts "  all             execute all supported command"
+  puts ""
+  exit
+end
+
+if __FILE__ == $0
+  args = ARGV
+  opt = OptionParser.new
+  OPTS={}
+
+  opt.on("-r VAL") {|v| OPTS[:readfrom] = v }
+  opt.on("-t") {|v| OPTS[:time] = true }
+  opt.on("-h") {|v| usage }
+  opt.on("-d") {|v| OPTS[:debug] = true }
+  opt.on("-f") {|v| OPTS[:force] = true }
+
+  opt.parse!(args)
+  usage if args[0] == nil
+
+  begin
+    analyzer = Pcap80211Analyzer.new(:pcappath => OPTS[:readfrom],
+                          :time => OPTS[:time],
+                          :force => OPTS[:force],
+                          :debug => OPTS[:debug]
+                         )
+    analyzer.execute(args)
+  rescue => e
+    print "Error: #{e.message} (#{e.backtrace})\n"
+    exit 1
+  end
+end

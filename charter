@@ -1,0 +1,159 @@
+#!/usr/bin/ruby
+
+require "optparse"
+require "tempfile"
+
+
+class Charter
+  TYPE_BAR="bar"
+  TYPE_STACK_3ELM="stack3elm"
+  TYPE_FIXSTACK_3ELM="fixstack3elm"
+
+  SUPPORTED_TYPES=[
+    TYPE_BAR,
+    TYPE_STACK_3ELM,
+    TYPE_FIXSTACK_3ELM,
+  ]
+
+  PATH_PREFIX="chartscripts"
+  PATH_BAR="#{PATH_PREFIX}/chart_bar.gnuplot"
+  PATH_STACK_3ELM="#{PATH_PREFIX}/chart_stackbar_3elm.gnuplot"
+  PATH_FIXSTACK_3ELM="#{PATH_PREFIX}/chart_fixstackbar_3elm.gnuplot"
+
+  DEFAULT_OUTPUT="output.png"
+
+  def self.list
+    print "Supported Chart Types:\n"
+    SUPPORTED_TYPES.each do |type|
+      print "- #{type}\n"
+    end
+  end
+
+  def initialize args={}
+    @type = OPTS[:type] || TYPE_BAR
+    @output = OPTS[:output] || DEFAULT_OUTPUT
+    @stdin = OPTS[:stdin] || nil
+
+    check
+  end
+
+  def check
+    unless SUPPORTED_TYPES.include?(@type)
+      raise "type=#{@type} is not supported"
+    end
+  end
+
+  def execute args=[]
+    fpath = nil
+    temp = nil
+    if @stdin != nil
+      temp = Tempfile.open("temp-chart")
+      temp.write(@stdin)
+      temp.flush
+      fpath = temp.path
+    else
+      if args[0] == nil
+        raise "no file specified"
+      end
+      fpath = args[0]
+      args.shift
+    end
+
+    func = "execute_" + @type
+    methods = self.methods - Object.methods
+    unless methods.include?(func.to_sym)
+      raise "no such type (#{@type})"
+    end
+
+    unless send(func, fpath, args)
+      raise "failed to generate chart"
+    end
+
+    temp.close if temp
+  end
+
+  def execute_bar path, args
+    eargs = {
+      "inputpath" => path,
+      "outputpath" => @output,
+      "name" => args[0],
+    }
+
+    return gnuplot(PATH_BAR, eargs)
+  end
+
+  def execute_stack3elm path, args
+    eargs = {
+      "inputpath" => path,
+      "outputpath" => @output,
+      "name0" => args[0],
+      "name1" => args[1],
+      "name2" => args[2],
+    }
+
+    return gnuplot(PATH_STACK_3ELM, eargs)
+  end
+
+  def execute_fixstack3elm path, args
+    eargs = {
+      "inputpath" => path,
+      "outputpath" => @output,
+      "name0" => args[0],
+      "name1" => args[1],
+      "name2" => args[2],
+    }
+
+    return gnuplot(PATH_FIXSTACK_3ELM, eargs)
+  end
+
+  def gnuplot path, eargs
+    str = "gnuplot -e #{args_to_s(eargs)} #{path}"
+    p str
+    return system(str)
+  end
+
+  def args_to_s args={}
+    str = "\""
+    args.each do |k, v|
+      str += "#{k}='#{v}';"
+    end
+    str += "\""
+    return str
+  end
+end
+
+def usage
+  puts "Usage:  charter [-dh] [-o output] -t <type> <csvfile>"
+  puts ""
+  Charter.list
+  exit 0
+end
+
+if __FILE__ == $0
+  args = ARGV
+  opt = OptionParser.new
+  OPTS={}
+
+  opt.on("-t VAL") {|v| OPTS[:type] = v }
+  opt.on("-o VAL") {|v| OPTS[:output] = v }
+  opt.on("-s") {|v| OPTS[:skip] = true }
+  opt.on("-h") {|v| usage }
+
+  opt.parse!(args)
+  if args[0] == nil or OPTS[:skip] == true
+    str = ""
+    while line = STDIN.gets
+      str += line
+    end
+    OPTS[:stdin] = str
+  end
+  usage if OPTS[:type] == nil
+
+  begin
+    charter = Charter.new(OPTS)
+    charter.execute(args)
+  rescue => e
+    print "Error: #{e.message}\n"
+    exit 1
+  end
+end
