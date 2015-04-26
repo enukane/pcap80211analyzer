@@ -510,6 +510,42 @@ end
     print "#{hist.to_csv_value_sorted}\n"
   end
 
+  def execute_uniq_ap_oui_5_histogram
+    hist = Histogram.new
+    addrs = []
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next unless st == 0x8 or st == 0x5
+      next unless chan.to_i > 13
+      addrs << ta
+    end
+
+    addrs.uniq.sort.each do |addr|
+      oui = addr[0..7]
+      vendor = @ouisearch.execute(oui)
+      hist.add(vendor.gsub(",", ""))
+    end
+
+    print "#{hist.to_csv_value_sorted}\n"
+  end
+
+  def execute_uniq_ap_oui_24_histogram
+    hist = Histogram.new
+    addrs = []
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next unless st == 0x8 or st == 0x5
+      next unless chan.to_i <= 13
+      addrs << ta
+    end
+
+    addrs.uniq.sort.each do |addr|
+      oui = addr[0..7]
+      vendor = @ouisearch.execute(oui)
+      hist.add(vendor.gsub(",", ""))
+    end
+
+    print "#{hist.to_csv_value_sorted}\n"
+  end
+
   def execute_uniq_sta
     stas = uniq_stas()
     stas.each do |addr|
