@@ -69,6 +69,21 @@ class Histogram < Hash
     end
     return str
   end
+
+  def to_csv_value_sorted_10 keyfilter=nil
+    str = ""
+    sorted = self.to_a.sort {|a, b| a[1] <=> b[1]}
+    sorted10 = [["OTHER", sorted[0..-11].inject(0){|sum, elm| sum + elm[1]}]].concat(sorted[-10..-1])
+    sorted10.each do |key, value|
+      if keyfilter and keyfilter.is_a?(Hash)
+        str += "#{keyfilter[key] ? keyfilter[key] : key},#{value}\n"
+      else
+        str += "#{key},#{value}\n"
+      end
+    end
+    return str
+  end
+
 end
 
 NUM2TYPENAME = {
@@ -240,6 +255,18 @@ class Pcap80211Analyzer
     print "#{str}\n" if @debug
   end
 
+  def list_commands
+    methods = self.methods - Object.methods
+    cmds = []
+    methods.each do |func|
+      match = func.to_s.match(/^execute_(.+)$/)
+      next unless match
+      next if match[1] == "all" or match[1] == "list"
+      cmds << match[1]
+    end
+    return cmds
+  end
+
   def sec_to_s sec
     date = { :day => 0, :hour => 0, :min => 0, :sec => 0 }
     date[:day] = sec / DAY
@@ -404,8 +431,7 @@ class Pcap80211Analyzer
   end
 
   # execute
-  def execute args
-    cmd = args.shift
+  def execute cmd, args
     @args = args
     func = "execute_" + cmd
     methods = self.methods - Object.methods
@@ -424,13 +450,7 @@ def execute_help
   execute_list
 end
   def execute_list
-    methods = self.methods - Object.methods
-    cmds = []
-    methods.each do |func|
-      match = func.to_s.match(/^execute_(.+)$/)
-      next unless match
-      cmds << match[1]
-    end
+    cmds = list_commands()
 
     print "Supported Commands:\n"
     cmds.sort.each do |cmd|
@@ -439,14 +459,7 @@ end
   end
 
   def execute_all
-    methods = self.methods - Object.methods
-    cmds = []
-    methods.each do |func|
-      match = func.to_s.match(/^execute_(.+)$/)
-      next unless match
-      next if match[1] == "all" or match[1] == "list"
-      cmds << match[1]
-    end
+    cmds = list_commands()
 
     print "<<< EXECUTE ALL COMMANDS >>>\n\n"
     cmds.sort.each do |cmd|
@@ -455,6 +468,22 @@ end
       print "\n\n"
     end
     print "<<< EXECUTE DONE >>>\n"
+  end
+
+  def execute_all_output_csv
+    dir = @args[:csvdir]
+    raise "no dir specified" if dir == nil
+    cmds = list_commands()
+    print "<<< EXECUTE and OUTPUT ALL COMMANDS >>>\n"
+    cmds.sort.each do |cmd|
+      next if cmd.match(/^all_.+$/)
+      $stdout = File.open("#{dir}/#{cmd}.csv", "w")
+      send("execute_" + cmd)
+      $stdout.close
+      $stdout = STDOUT
+      print "DONE: #{cmd}\n"
+    end
+    print "<<< EXECUTE DONE>>>\n"
   end
 
   def execute_uniq_ap
@@ -510,6 +539,18 @@ end
     print "#{hist.to_csv_value_sorted}\n"
   end
 
+  def execute_uniq_ap_oui_histogram_10
+    hist = Histogram.new
+    aps = uniq_aps()
+    aps.each do |addr|
+      oui = addr[0..7]
+      vendor = @ouisearch.execute(oui)
+      hist.add(vendor.gsub(",", ""))
+    end
+
+    print "#{hist.to_csv_value_sorted_10}\n"
+  end
+
   def execute_uniq_ap_oui_5_histogram
     hist = Histogram.new
     addrs = []
@@ -528,6 +569,24 @@ end
     print "#{hist.to_csv_value_sorted}\n"
   end
 
+  def execute_uniq_ap_oui_5_histogram_10
+    hist = Histogram.new
+    addrs = []
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next unless st == 0x8 or st == 0x5
+      next unless chan.to_i > 13
+      addrs << ta
+    end
+
+    addrs.uniq.sort.each do |addr|
+      oui = addr[0..7]
+      vendor = @ouisearch.execute(oui)
+      hist.add(vendor.gsub(",", ""))
+    end
+
+    print "#{hist.to_csv_value_sorted_10}\n"
+  end
+
   def execute_uniq_ap_oui_24_histogram
     hist = Histogram.new
     addrs = []
@@ -544,6 +603,24 @@ end
     end
 
     print "#{hist.to_csv_value_sorted}\n"
+  end
+
+  def execute_uniq_ap_oui_24_histogram_10
+    hist = Histogram.new
+    addrs = []
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next unless st == 0x8 or st == 0x5
+      next unless chan.to_i <= 13
+      addrs << ta
+    end
+
+    addrs.uniq.sort.each do |addr|
+      oui = addr[0..7]
+      vendor = @ouisearch.execute(oui)
+      hist.add(vendor.gsub(",", ""))
+    end
+
+    print "#{hist.to_csv_value_sorted_10}\n"
   end
 
   def execute_uniq_sta
@@ -628,6 +705,19 @@ end
 
     print "#{hist.to_csv_value_sorted}\n"
   end
+
+  def execute_uniq_sta_oui_histogram_10
+    hist = Histogram.new
+    stas = uniq_stas()
+    stas.each do |addr|
+      oui = addr[0..7]
+      vendor = @ouisearch.execute(oui)
+      hist.add(vendor.gsub(",", ""))
+    end
+
+    print "#{hist.to_csv_value_sorted_10}\n"
+  end
+
 
   def execute_channel_histogram
     hist = Histogram.new
@@ -960,6 +1050,7 @@ def usage
   puts "  -h              show this help"
   puts "  -t              measure time consumed by force reloading"
   puts "  -r              specify target pcapng file (should be 802.11 radiotap)"
+  puts "  -v              specify csv output dir"
   puts ""
   puts "<command>"
   puts "  list            list all available command"
@@ -978,9 +1069,11 @@ if __FILE__ == $0
   opt.on("-h") {|v| usage }
   opt.on("-d") {|v| OPTS[:debug] = true }
   opt.on("-f") {|v| OPTS[:force] = true }
+  opt.on("-c VAL") {|v| OPTS[:csvdir] = v }
 
   opt.parse!(args)
   usage if args[0] == nil
+  target = args[0]
 
   begin
     analyzer = Pcap80211Analyzer.new(:pcappath => OPTS[:readfrom],
@@ -988,7 +1081,7 @@ if __FILE__ == $0
                           :force => OPTS[:force],
                           :debug => OPTS[:debug]
                          )
-    analyzer.execute(args)
+    analyzer.execute(target, OPTS)
   rescue => e
     print "Error: #{e.message} (#{e.backtrace})\n"
     exit 1
