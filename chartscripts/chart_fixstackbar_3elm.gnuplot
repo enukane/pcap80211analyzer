@@ -2,8 +2,9 @@
 set datafile separator ","
 
 set yrange [0:100]
-set ytics 10
-set mytics 10
+#set ytics 10
+#set mytics 10
+set xtics rotate by -90
 #set grid yticks
 set boxwidth 0.8 relative
 set style fill solid border lc rgb "black"
