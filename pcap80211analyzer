@@ -840,7 +840,39 @@ end
     rate5 = frame5 / total * 100.0
     rate24 = frame24 / total * 100.0
 
-    print "TotalDataFrames, #{frame5+frame24}, 100\n"
+    print "TotalMgmtFrames, #{frame5+frame24}, 100\n"
+    print "2.4GHz, #{frame24}, #{rate24}\n"
+    print "5GHz, #{frame5}, #{rate5}\n"
+  end
+
+  def execute_ctrl_frame_num
+    frame_num = 0
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      if 0x0d < st and st < 0x20
+        frame_num += 1
+      end
+    end
+
+    print "CtrlFrameNum, #{frame_num}\n"
+  end
+
+  def execute_ctrl_frame_num_per_band
+    frame5 = 0
+    frame24 = 0
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra|
+      next unless 0x0d < st and st < 0x20
+      if chan.to_i > 13
+        frame5 += 1
+      else
+        frame24 += 1
+      end
+    end
+
+    total = (frame24 + frame5).to_f
+    rate5 = frame5 / total * 100.0
+    rate24 = frame24 / total * 100.0
+
+    print "TotalCtrlFrames, #{frame5+frame24}, 100\n"
     print "2.4GHz, #{frame24}, #{rate24}\n"
     print "5GHz, #{frame5}, #{rate5}\n"
   end
