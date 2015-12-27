@@ -1,4 +1,4 @@
-#!/usr/bin/ruby
+#!/usr/bin/env ruby
 
 $:.unshift File.dirname(__FILE__)
 
@@ -427,7 +427,7 @@ class Pcap80211Analyzer
       stas << sa
       stas << ra
     end
-    return stas.sort.uniq
+    return stas.compact.sort.uniq
   end
 
   # execute
@@ -512,8 +512,8 @@ end
       end
     end
 
-    uniq5 = ap5.sort.uniq
-    uniq24 = ap24.sort.uniq
+    uniq5 = ap5.compact.sort.uniq
+    uniq24 = ap24.compact.sort.uniq
     uniq_com = uniq5 & uniq24
 
     total = uniq_aps().length.to_f
