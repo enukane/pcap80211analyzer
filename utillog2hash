@@ -1,0 +1,42 @@
+#!/usr/bin/env ruby
+
+fname = ARGV.shift
+if fname == nil or File.exists?(fname) == false
+  STDERR.puts("no such file '#{fname}'")
+  exit 1
+end
+
+REG=/^ *\[(?<year>\d+)-(?<month>\d+)-(?<date>\d+) (?<hour>\d\d):(?<minute>\d\d):(?<secound>\d\d) \+0900\] .+utilization=(?<utilization>\d+\.\d+) uch=(?<channel>\d+)\)$/
+MERGE=60*2
+
+time_seq = {}
+
+File.open(fname) do |f|
+  while line = f.gets
+    match = line.strip.match(REG)
+    next unless match
+    time = Time.new(match[:year].to_i, match[:month].to_i, match[:date].to_i, match[:hour].to_i, match[:minute].to_i, match[:secound].to_i)
+    utilization = match[:utilization].to_f
+    channel = match[:channel].to_i
+
+    # print "#{time.to_i}, #{utilization}, #{channel}\n"
+    merged_time = time.to_i / MERGE * MERGE
+    time_seq[merged_time] = {} if time_seq[merged_time] == nil
+    time_seq[merged_time][channel] = utilization
+  end
+end
+
+
+LIST=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
+      34, 36, 38, 40, 42, 44, 46, 48,
+      52, 56, 60, 64,
+      100, 104, 108, 112, 116,
+      120, 124, 128, 132, 136, 140,
+      149, 153, 157, 161, 165]
+print "utime,#{LIST.join(',')}\n"
+
+time_seq.sort.each do |k, hash|
+  print "#{Time.at(k).strftime("%Y/%m/%d %H:%M:%S")},"
+  utils = LIST.map{|chan| if hash[chan] == nil then 0.0 else hash[chan] end }
+  print "#{utils.join(',')}\n"
+end

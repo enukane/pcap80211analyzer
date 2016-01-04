@@ -1,0 +1,65 @@
+#!/usr/bin/env python
+import matplotlib.pyplot as plt
+import pandas as pd
+from urllib2 import urlopen
+import numpy as np
+import sys
+
+argvs = sys.argv
+
+fname = argvs[1]
+output = fname.split(".")[0] + ".png"
+
+nba = pd.read_csv(fname, index_col=0)
+plt.figure(figsize=(84, 64))
+
+fig, ax = plt.subplots()
+#heatmap = ax.pcolor(nba, cmap=plt.cm.Reds, alpha=0.8)
+#heatmap = ax.pcolormesh(nba.values, cmap=plt.cm.Reds, alpha=1, vmin=0, vmax=100)
+heatmap = ax.pcolormesh(nba.values, cmap=plt.cm.Greys, alpha=1, vmin=0, vmax=100)
+
+fig = plt.gcf()
+ax.set_frame_on(False)
+
+# put the major ticks at the middle of each cell
+ax.set_yticks(np.arange(nba.shape[0]) + 0.5, minor=False)
+ax.set_xticks(np.arange(nba.shape[1]) + 0.5, minor=False)
+
+# want a more natural, table-like display
+ax.invert_yaxis()
+ax.xaxis.tick_top()
+
+# Set the labels
+
+# label source:https://en.wikipedia.org/wiki/Basketball_statistics
+labels = [
+1, 2, 5, 6, 7, 9, 11, 12, 13, 14, 18, 19, 21, 24, 26, 27, 28, 36, 39, 43, 48, 52, 54, 57, 58, 65, 72, 78, 81, 86, 104, 108, 115, 117, 130, 144, 150
+	]
+
+ax.set_xticklabels(labels, minor=False)
+ax.set_yticklabels(nba.index, minor=False)
+
+# rotate
+plt.xticks(rotation=90, fontsize=10)
+plt.yticks(fontsize=10)
+
+ax.grid(False)
+
+# Turn off all the ticks
+ax = plt.gca()
+
+for t in ax.xaxis.get_major_ticks():
+	t.tick1On = False
+	t.tick2On = False
+for t in ax.yaxis.get_major_ticks():
+	t.tick1On = False
+	t.tick2On = False
+
+
+#plt.show()
+#plt.title("Channel Utilization", fontsize=20)
+plt.colorbar(heatmap)
+plt.bone()
+plt.xlabel("Rate", fontsize=8)
+plt.ylabel("Channel", fontsize=10)
+plt.savefig(output)

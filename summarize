@@ -1,0 +1,108 @@
+#!/usr/bin/env ruby
+
+require "optparse"
+
+class Summarizer
+  TYPE_BAR="bar"
+  TYPE_STACK3ELM="stack3elm"
+  TYPE_FIXSTACK_3ELM="fixstack3elm"
+  TYPE_DATARATEMAP="dataratemap"
+  TYPE_CHANUTIL="chanutil"
+
+  def self.default_options
+    {
+      :name => "default",
+      :readfrom => nil,
+    }
+  end
+
+  def initialize args={}
+    @name = args[:name]
+    @readfrom = OPTS[:readfrom]
+  end
+
+  def do_graph(type, metric)
+    print "EXECUTE: mertic = #{metric}, type = #{type}\n"
+    output = "#{@name}/#{metric}.png"
+    input = "#{@name}/#{metric}.csv"
+    ret = false
+    case type
+    when TYPE_BAR, TYPE_STACK3ELM, TYPE_FIXSTACK_3ELM
+      ret = system("./charter -t #{type} -o #{output} #{input}")
+    when TYPE_DATARATEMAP
+      ret = system("./dataratemap #{input}")
+    when TYPE_CHANUTIL
+      input_log = "#{@name}/#{metric}.log"
+      ret = system("./utillog2hash #{input_log} > #{input}")
+      ret = system("./chanutilmap #{input}")
+    end
+
+    unless ret
+      print "ERROR: failed to graph #{metric} on type #{type}\n"
+    end
+  end
+
+  def output_csv
+    unless Dir.exists?(@name)
+      if File.exists?(@name)
+        raise "file already exists as #{@name}"
+      end
+      Dir.mkdir(@name)
+    end
+    unless system("./pcap80211analyzer -r #{@readfrom} -c #{@name} all_output_csv}")
+      raise "failed to output csv"
+    end
+  end
+
+  def output_graph
+    do_graph(TYPE_BAR, "channel_ap_histogram")
+    do_graph(TYPE_BAR, "channel_sta_histogram")
+    do_graph(TYPE_BAR, "channel_sta_wo_ap_histogram")
+    do_graph(TYPE_BAR, "channel_sta_data_histogram")
+    do_graph(TYPE_BAR, "channel_sta_wo_ap_histogram")
+    do_graph(TYPE_STACK3ELM, "type_histogram")
+    do_graph(TYPE_FIXSTACK_3ELM, "type_histogram")
+    do_graph(TYPE_BAR, "subtype_histogram")
+    do_graph(TYPE_BAR, "subtype_24_histogram")
+    do_graph(TYPE_BAR, "subtype_5_histogram")
+    do_graph(TYPE_BAR, "rate_histogram")
+    do_graph(TYPE_BAR, "rate_24_histogram")
+    do_graph(TYPE_BAR, "rate_5_histogram")
+    do_graph(TYPE_BAR, "data_rate_histogram")
+    do_graph(TYPE_BAR, "data_rate_24_histogram")
+    do_graph(TYPE_BAR, "data_rate_5_histogram")
+    do_graph(TYPE_BAR, "uniq_ap_oui_histogram_10")
+    do_graph(TYPE_BAR, "uniq_ap_oui_24_histogram_10")
+    do_graph(TYPE_BAR, "uniq_ap_oui_5_histogram_10")
+    do_graph(TYPE_BAR, "uniq_sta_oui_histogram_10")
+    do_graph(TYPE_DATARATEMAP, "channel_datarate_data_histogram")
+    do_graph(TYPE_DATARATEMAP, "channel_datarate_histogram")
+    do_graph(TYPE_CHANUTIL, "#{@name}_util")
+  end
+end
+
+if __FILE__ == $0
+  args = ARGV
+  opt = OptionParser.new
+
+  OPTS = Summarizer.default_options
+
+  opt.on("-n VAL") {|v| OPTS[:name] = v}
+  opt.on("-r VAL") {|v| OPTS[:readfrom] = v }
+  opt.on("-g") {|v| OPTS[:graphonly] = true }
+
+  opt.parse!(args)
+
+  begin
+    summarizer = Summarizer.new(OPTS)
+    unless OPTS[:graphonly]
+      print "doing csv\n"
+      summarizer.output_csv
+    end
+    print "doing graph\n"
+    summarizer.output_graph
+  rescue => e
+    print "Error: #{e.message} (#{e.backtrace})"
+    exit 1
+  end
+end

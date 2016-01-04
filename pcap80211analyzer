@@ -188,6 +188,12 @@ FREQ2CHAN = {
   5660  => 132,
   5680  => 136,
   5700  => 140,
+  5720  => 144,
+  5745  => 149,
+  5765  => 153,
+  5785  => 157,
+  5805  => 161,
+  5825  => 165,
 
   # 802.11j
   #4920  => 184,
@@ -391,7 +397,7 @@ class Pcap80211Analyzer
     end
     tshark_radiotap().split("\n").each do |line|
       time, framelen, taplen, rate, signal, freq, st, ta, sa, ra, bssid = line.split(",")
-      ary << {
+      elm = {
         :time     => time.to_i,
         :framelen => framelen.to_i,
         :taplen   => taplen.to_i,
@@ -404,6 +410,11 @@ class Pcap80211Analyzer
         :ra       => ra,
         :bssid    => bssid,
       }
+      if elm[:chan] == nil or elm[:chan] == 0
+        p "freq #{freq} to #{elm[:chan]}"
+      end
+      next if elm[:chan] == nil
+      ary << elm
     end
 
     @cached_tshark_radiotap = ary
@@ -534,7 +545,7 @@ class Pcap80211Analyzer
         print "DONE: #{cmd}\n"
       rescue => e
         $stdout = STDOUT
-        print "FAILED: #{cmd} (#{e})\n"
+        print "FAILED: #{cmd} (#{e}, #{e.backtrace})\n"
       end
     end
     print "<<< EXECUTE DONE>>>\n"
@@ -709,7 +720,7 @@ class Pcap80211Analyzer
   def execute_ap_with_date
     aps = uniq_aps_with_data
     aps.each do |addr|
-      prin "#{addr}\n"
+      print "#{addr}\n"
     end
   end
 
@@ -764,6 +775,7 @@ class Pcap80211Analyzer
   def execute_subtype_24_histogram
     hist = Histogram.new
     tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+      next unless chan
       next if chan > 13
       hist.add(st)
     end
@@ -774,6 +786,7 @@ class Pcap80211Analyzer
   def execute_subtype_5_histogram
     hist = Histogram.new
     tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+      next unless chan
       next if chan < 13
       hist.add(st)
     end
@@ -809,6 +822,7 @@ class Pcap80211Analyzer
   def execute_channel_histogram
     hist = Histogram.new
     tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+      next if chan == nil
       hist.add(chan)
     end
     hist.fill(CHANNELS)
@@ -977,6 +991,7 @@ class Pcap80211Analyzer
   def execute_rate_24_histogram
     hist = Histogram.new
     tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+      next unless chan
       next if chan > 13
       hist.add(rate)
     end
@@ -988,6 +1003,7 @@ class Pcap80211Analyzer
   def execute_rate_5_histogram
     hist = Histogram.new
     tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+      next unless chan
       next if chan <= 13
       hist.add(rate)
     end
@@ -1011,6 +1027,7 @@ class Pcap80211Analyzer
   def execute_data_rate_24_histogram
     hist = Histogram.new
     tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+      next unless chan
       next if chan > 13
       if 0x20 <= st and st < 0x30
         hist.add(rate)
@@ -1024,6 +1041,7 @@ class Pcap80211Analyzer
   def execute_data_rate_5_histogram
     hist = Histogram.new
     tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+      next unless chan
       next if chan <= 13
       if 0x20 <= st and st < 0x30
         hist.add(rate)
@@ -1050,6 +1068,7 @@ class Pcap80211Analyzer
   def execute_channel_sta_histogram
     hist = Histogram.new
     tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+      next unless chan
       hist.add_uniq(chan, ta)
     end
     hist.keep_uniq
@@ -1063,6 +1082,7 @@ class Pcap80211Analyzer
     histap = Histogram.new
     tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
       next unless st == 0x08 or st == 0x05
+      next unless chan
       histap.add_uniq(chan, ta)
     end
     histap.keep_uniq
@@ -1234,7 +1254,7 @@ def usage
   puts "  -h              show this help"
   puts "  -t              measure time consumed by force reloading"
   puts "  -r              specify target pcapng file (should be 802.11 radiotap)"
-  puts "  -v              specify csv output dir"
+  puts "  -c              specify csv output dir"
   puts ""
   puts "<command>"
   puts "  list            list all available command"
