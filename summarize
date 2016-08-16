@@ -56,12 +56,14 @@ class Summarizer
 
   def output_graph
     do_graph(TYPE_BAR, "channel_ap_histogram")
+    do_graph(TYPE_BAR, "channel_ap_data_histogram")
     do_graph(TYPE_BAR, "channel_sta_histogram")
     do_graph(TYPE_BAR, "channel_sta_wo_ap_histogram")
     do_graph(TYPE_BAR, "channel_sta_data_histogram")
     do_graph(TYPE_BAR, "channel_sta_wo_ap_histogram")
-    do_graph(TYPE_STACK3ELM, "type_histogram")
-    do_graph(TYPE_FIXSTACK_3ELM, "type_histogram")
+    do_graph(TYPE_BAR, "channel_sta_data_wo_ap_histogram")
+    do_graph(TYPE_STACK3ELM, "channel_type_histogram")
+    do_graph(TYPE_FIXSTACK_3ELM, "channel_type_histogram")
     do_graph(TYPE_BAR, "subtype_histogram")
     do_graph(TYPE_BAR, "subtype_24_histogram")
     do_graph(TYPE_BAR, "subtype_5_histogram")

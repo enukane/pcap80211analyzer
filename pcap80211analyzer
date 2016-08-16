@@ -211,6 +211,8 @@ class Pcap80211Analyzer
   TYPE_ADDR_SUBTYPE="addr_n_subtype"
   TYPE_RADIOTAP="radiotap"
 
+  OPT_NOBADFCS = " -Y 'radiotap.flags.badfcs == 0'"
+
   MIN=60
   HOUR=MIN*60
   DAY=24*HOUR
@@ -222,13 +224,8 @@ class Pcap80211Analyzer
     @time = args[:time] || false
     @force = args[:force] || false
     @debug = args[:debug] || false
-    @badfcs = args[:badfcs] || false
 
     @ouisearch = OuiSearch.new(:reload => false, :debug => @debug)
-
-    unless @badfcs
-      @badfcsopt = "-Y 'radiotap.flags.badfcs == 0'"
-    end
 
     @cache = {}
 
@@ -336,7 +333,7 @@ class Pcap80211Analyzer
       return cached if cached
     end
 
-    io = IO.popen("tshark -E separator=, #{options} -T fields -r #{@pcappath} #{@badfcsopt}")
+    io = IO.popen("tshark -E separator=, #{options} -T fields -r #{@pcappath}")
     data = io.read
 
     put_cache_data(type, data)
@@ -346,7 +343,9 @@ class Pcap80211Analyzer
   # sub utilities
   def tshark_addr_n_subtype
     return do_tshark(TYPE_ADDR_SUBTYPE,
-                     "-e 'wlan.ta' -e 'wlan.sa' -e 'wlan.ra' -e 'wlan.fc.type_subtype' -e 'wlan.bssid'")
+                     "-e 'wlan.ta' -e 'wlan.sa' -e 'wlan.ra' -e 'wlan.fc.type_subtype' -e 'wlan.bssid'" +
+                     OPT_NOBADFCS
+                    )
   end
 
   def tshark_addr_n_subtype_to_a
@@ -382,11 +381,13 @@ class Pcap80211Analyzer
                      " -e 'radiotap.datarate'" +
                      " -e 'radiotap.dbm_antsignal'" +
                      " -e 'radiotap.channel.freq'" +
+                     " -e 'radiotap.flags.badfcs'" +
                      " -e 'wlan.fc.type_subtype'" +
                      " -e 'wlan.ta'" +
                      " -e 'wlan.sa'" +
                      " -e 'wlan.ra'" +
-                     " -e 'wlan.bssid'"
+                     " -e 'wlan.bssid'" +
+                     " -e 'wlan.fc.retry'"
                     )
   end
 
@@ -396,19 +397,21 @@ class Pcap80211Analyzer
       return @cached_tshark_radiotap
     end
     tshark_radiotap().split("\n").each do |line|
-      time, framelen, taplen, rate, signal, freq, st, ta, sa, ra, bssid = line.split(",")
+      time, framelen, taplen, rate, signal, freq, badfcs, st, ta, sa, ra, bssid, _retry = line.split(",")
       elm = {
-        :time     => time.to_i,
+        :time     => time.to_f,
         :framelen => framelen.to_i,
         :taplen   => taplen.to_i,
         :rate     => rate.to_i,
         :signal   => signal.to_i,
         :chan     => FREQ2CHAN[freq.to_i],
+        :badfcs   => (badfcs.to_i == 1),
         :st       => st.to_i,
         :ta       => ta,
         :sa       => sa,
         :ra       => ra,
         :bssid    => bssid,
+        :retry    => (_retry.to_i == 1),
       }
       if elm[:chan] == nil or elm[:chan] == 0
         p "freq #{freq} to #{elm[:chan]}"
@@ -421,8 +424,12 @@ class Pcap80211Analyzer
     return ary
   end
 
-  def tshark_radiotap_each
+  def tshark_radiotap_each(accept_badfcs=false)
     tshark_radiotap_to_a.each do |hash|
+      if !accept_badfcs and hash[:badfcs]
+        next
+      end
+
       yield(
         hash[:time],
         hash[:framelen],
@@ -430,11 +437,13 @@ class Pcap80211Analyzer
         hash[:rate],
         hash[:signal],
         hash[:chan],
+        hash[:badfcs],
         hash[:st],
         hash[:ta],
         hash[:sa],
         hash[:ra],
-        hash[:bssid]
+        hash[:bssid],
+        hash[:retry]
       )
     end
   end
@@ -488,6 +497,35 @@ class Pcap80211Analyzer
     stas = uniq_stas_with_data
     aps = uniq_aps_with_data
     return (stas - aps).compact.sort.uniq
+  end
+
+  def iterate_chan totaling, finalizer, &block
+    prev_chan = nil
+    accum = nil
+    global = {}
+
+    tshark_radiotap_to_a.each do |hash|
+      cur_chan = hash[:chan]
+      cur_time = hash[:time]
+      if @prev_chan != cur_chan
+        unless @prev_chan.nil?
+          # channel changed
+          totaling.call(accum, global)
+        end
+
+        prev_chan = cur_chan
+        accum = {
+          :chan => cur_chan,
+          :start_time => cur_time,
+        }
+      end
+
+      accum = yield(accum, global, hash)
+    end
+
+    if finalizer
+      finalizer.call(global)
+    end
   end
 
   # execute
@@ -566,7 +604,7 @@ class Pcap80211Analyzer
   def execute_uniq_ap_num_per_band
     ap5 = []
     ap24 = []
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       unless st == 8 or st == 5
         next
       end
@@ -619,7 +657,7 @@ class Pcap80211Analyzer
   def execute_uniq_ap_oui_5_histogram
     hist = Histogram.new
     addrs = []
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless st == 0x8 or st == 0x5
       next unless chan.to_i > 13
       addrs << ta
@@ -637,7 +675,7 @@ class Pcap80211Analyzer
   def execute_uniq_ap_oui_5_histogram_10
     hist = Histogram.new
     addrs = []
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless st == 0x8 or st == 0x5
       next unless chan.to_i > 13
       addrs << ta
@@ -655,7 +693,7 @@ class Pcap80211Analyzer
   def execute_uniq_ap_oui_24_histogram
     hist = Histogram.new
     addrs = []
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless st == 0x8 or st == 0x5
       next unless chan.to_i <= 13
       addrs << ta
@@ -673,7 +711,7 @@ class Pcap80211Analyzer
   def execute_uniq_ap_oui_24_histogram_10
     hist = Histogram.new
     addrs = []
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless st == 0x8 or st == 0x5
       next unless chan.to_i <= 13
       addrs << ta
@@ -738,7 +776,7 @@ class Pcap80211Analyzer
   def execute_uniq_sta_num_per_band
     sta5 = []
     sta24 = []
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       if chan.to_i > 13
         sta5 << ta if ta
         sta5 << ra if ra
@@ -774,7 +812,7 @@ class Pcap80211Analyzer
 
   def execute_subtype_24_histogram
     hist = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless chan
       next if chan > 13
       hist.add(st)
@@ -785,7 +823,7 @@ class Pcap80211Analyzer
 
   def execute_subtype_5_histogram
     hist = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless chan
       next if chan < 13
       hist.add(st)
@@ -821,7 +859,7 @@ class Pcap80211Analyzer
 
   def execute_channel_histogram
     hist = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next if chan == nil
       hist.add(chan)
     end
@@ -832,8 +870,8 @@ class Pcap80211Analyzer
 
   def execute_time_term
     ary = tshark_radiotap_to_a()
-    first_time = ary[0][:time]
-    last_time = ary[-1][:time]
+    first_time = ary[0][:time].to_i
+    last_time = ary[-1][:time].to_i
     first_date = Time.at(first_time)
     last_date = Time.at(last_time)
     time_term = last_time - first_time
@@ -851,7 +889,7 @@ class Pcap80211Analyzer
   def execute_frame_num_per_band
     frame5 = 0
     frame24 = 0
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       if chan.to_i > 13
         frame5 += 1
       else
@@ -873,7 +911,7 @@ class Pcap80211Analyzer
     hist24 = Histogram.new
     hist5 = Histogram.new
 
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       type = num2type(st)
       hist.add(type)
       if chan.to_i > 13
@@ -895,7 +933,7 @@ class Pcap80211Analyzer
 
   def execute_data_frame_num
     frame_num = 0
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       if 0x20 <= st and st < 0x30
         frame_num += 1
       end
@@ -907,7 +945,7 @@ class Pcap80211Analyzer
   def execute_data_frame_num_per_band
     frame5 = 0
     frame24 = 0
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless 0x20 <= st and st < 0x30
       if chan.to_i > 13
         frame5 += 1
@@ -928,7 +966,7 @@ class Pcap80211Analyzer
   def execute_mgmt_frame_num_per_band
     frame5 = 0
     frame24 = 0
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next if st > 0x0d
       if chan.to_i > 13
         frame5 += 1
@@ -948,7 +986,7 @@ class Pcap80211Analyzer
 
   def execute_ctrl_frame_num
     frame_num = 0
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       if 0x0d < st and st < 0x20
         frame_num += 1
       end
@@ -960,7 +998,7 @@ class Pcap80211Analyzer
   def execute_ctrl_frame_num_per_band
     frame5 = 0
     frame24 = 0
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless 0x0d < st and st < 0x20
       if chan.to_i > 13
         frame5 += 1
@@ -980,7 +1018,7 @@ class Pcap80211Analyzer
 
   def execute_rate_histogram
     hist = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       hist.add(rate)
     end
 
@@ -990,7 +1028,7 @@ class Pcap80211Analyzer
 
   def execute_rate_24_histogram
     hist = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless chan
       next if chan > 13
       hist.add(rate)
@@ -1002,7 +1040,7 @@ class Pcap80211Analyzer
 
   def execute_rate_5_histogram
     hist = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless chan
       next if chan <= 13
       hist.add(rate)
@@ -1014,7 +1052,7 @@ class Pcap80211Analyzer
 
   def execute_data_rate_histogram
     hist = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       if 0x20 <= st and st < 0x30
         hist.add(rate)
       end
@@ -1026,7 +1064,7 @@ class Pcap80211Analyzer
 
   def execute_data_rate_24_histogram
     hist = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless chan
       next if chan > 13
       if 0x20 <= st and st < 0x30
@@ -1040,7 +1078,7 @@ class Pcap80211Analyzer
 
   def execute_data_rate_5_histogram
     hist = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless chan
       next if chan <= 13
       if 0x20 <= st and st < 0x30
@@ -1054,7 +1092,7 @@ class Pcap80211Analyzer
 
   def execute_channel_ap_histogram
     hist = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless st == 0x08 or st == 0x05
       hist.add_uniq(chan, ta)
     end
@@ -1067,7 +1105,7 @@ class Pcap80211Analyzer
 
   def execute_channel_sta_histogram
     hist = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless chan
       hist.add_uniq(chan, ta)
     end
@@ -1080,7 +1118,7 @@ class Pcap80211Analyzer
 
   def execute_channel_sta_wo_ap_histogram
     histap = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless st == 0x08 or st == 0x05
       next unless chan
       histap.add_uniq(chan, ta)
@@ -1089,7 +1127,7 @@ class Pcap80211Analyzer
     histap.fill(CHANNELS, [])
 
     histsta = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       histsta.add_uniq(chan, ta)
     end
     histsta.keep_uniq
@@ -1106,7 +1144,7 @@ class Pcap80211Analyzer
 
   def execute_channel_sta_data_histogram
     hist = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       if 0x20 <= st and st < 0x30
         hist.add_uniq(chan, ta)
       end
@@ -1118,9 +1156,24 @@ class Pcap80211Analyzer
     print "#{hist.to_csv_key_sorted}\n"
   end
 
+  def execute_channel_ap_data_histogram
+    hist = Histogram.new
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
+      if 0x20 <= st and st < 0x30
+        hist.add_uniq(chan, bssid)
+      end
+    end
+    hist.keep_uniq
+    hist.fill(CHANNELS, [])
+
+    print "#Channel, stations\n"
+    print "#{hist.to_csv_key_sorted}\n"
+
+  end
+
   def execute_channel_sta_data_wo_ap_histogram
     histap = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless st == 0x08 or st == 0x05
       histap.add_uniq(chan, ta)
     end
@@ -1128,7 +1181,7 @@ class Pcap80211Analyzer
     histap.fill(CHANNELS, [])
 
     histsta = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless  0x20 <= st and st < 0x30
       histsta.add_uniq(chan, ta)
     end
@@ -1147,7 +1200,7 @@ class Pcap80211Analyzer
   def execute_channel_type_histogram
     # need another hash-like thingy?
     hist = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       type = num2type(st)
       key = "#{chan}_#{type}"
       hist.add(key)
@@ -1183,7 +1236,7 @@ class Pcap80211Analyzer
 
   def execute_channel_datarate_histogram
     hist = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next if rate == 0
       key = "#{chan}_#{rate}"
       hist.add(key)
@@ -1215,7 +1268,7 @@ class Pcap80211Analyzer
 
   def execute_channel_datarate_data_histogram
     hist = Histogram.new
-    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, st, ta, sa, ra, bssid|
+    tshark_radiotap_each do |time, len, taplen, rate, signal, chan, badfcs, st, ta, sa, ra, bssid, _retry|
       next unless 0x20 <= st and st < 0x30
       next if rate == 0
       key = "#{chan}_#{rate}"
