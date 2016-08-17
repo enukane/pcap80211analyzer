@@ -74,7 +74,7 @@ class Histogram < Hash
     str = ""
     sorted = self.to_a.sort {|a, b| a[1] <=> b[1]}
     rev_sorted = sorted.reverse
-    other = (sorted[10..-1] || []).inject(0){|sum, elm| sum + elm[1]}
+    other = (rev_sorted[10..-1] || [["", 0]]).inject(0){|sum, elm| sum + elm[1]}
     rev_sorted10 = rev_sorted[0..9].concat([["OTHER", other]])
     sorted10 = rev_sorted10.reverse
     sorted10.each do |key, value|
