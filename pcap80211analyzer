@@ -1,4 +1,4 @@
-#!/usr/bin/env ruby
+#!/usr/bin/env ruby -Ku
 
 $:.unshift File.dirname(__FILE__)
 
@@ -390,7 +390,8 @@ class Pcap80211Analyzer
                      " -e 'wlan.sa'" +
                      " -e 'wlan.ra'" +
                      " -e 'wlan.bssid'" +
-                     " -e 'wlan.fc.retry'"
+                     " -e 'wlan.fc.retry'" +
+                     " -e 'wlan_mgt.ssid'"
                     )
   end
 
@@ -400,7 +401,7 @@ class Pcap80211Analyzer
       return @cached_tshark_radiotap
     end
     tshark_radiotap().split("\n").each do |line|
-      time, framelen, taplen, rate, signal, freq, badfcs, st, ta, sa, ra, bssid, _retry = line.split(",")
+      time, framelen, taplen, rate, signal, freq, badfcs, st, ta, sa, ra, bssid, _retry, ssid = line.split(",")
       elm = {
         :time     => time.to_f,
         :framelen => framelen.to_i,
@@ -415,6 +416,7 @@ class Pcap80211Analyzer
         :ra       => ra,
         :bssid    => bssid,
         :retry    => (_retry.to_i == 1),
+        :ssid     => ssid,
       }
       next if elm[:chan] == nil or elm[:chan] == 0
       ary << elm
@@ -524,6 +526,45 @@ class Pcap80211Analyzer
 
       accum = iteratee.call(accum, hash)
     end
+  end
+
+  def uniq_ssid
+    ssid_hash = {}
+
+    tshark_radiotap_each do |hash|
+      st = hash[:st]
+      ta = hash[:ta]
+      ssid = hash[:ssid]
+
+      next unless st == 8 or st == 5
+      next if hash[:ssid].nil? or hash[:ssid].length == 0
+
+      if ssid_hash[ssid].nil?
+        ssid_hash[ssid] = []
+      end
+
+      ssid_hash[ssid] << ta
+      ssid_hash[ssid]
+    end
+
+    return ssid_hash
+  end
+
+  def uniq_ssid_histogram
+    ssid_hash = uniq_ssid()
+
+    hist = Histogram.new
+    ssid_hash.to_a.map{|elm|
+      [elm[0], elm[1].compact.sort.uniq.length]
+    }.sort{|a, b|
+      a[1] <=> b[1]
+    }.each{|elm|
+      1.upto(elm[1]){|n|
+        hist.add(elm[0])
+      }
+    }
+
+    return hist
   end
 
   # execute
@@ -1449,6 +1490,21 @@ class Pcap80211Analyzer
       accum
     end
     iterate_chan totaling, iteratee
+  end
+
+  def execute_uniq_ssid
+    ssid_hash = uniq_ssid()
+    ssid_hash.keys.sort.each do |ssid|
+      print "#{ssid}\n"
+    end
+  end
+
+  def execute_uniq_ssid_histogram
+    print "#{uniq_ssid_histogram().to_csv_key_sorted}\n"
+  end
+
+  def execute_uniq_ssid_histogram_10
+    print "#{uniq_ssid_histogram().to_csv_value_sorted_10}\n"
   end
 end
 
