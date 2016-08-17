@@ -499,18 +499,17 @@ class Pcap80211Analyzer
     return (stas - aps).compact.sort.uniq
   end
 
-  def iterate_chan totaling, finalizer, &block
+  def iterate_chan totaling, iteratee
     prev_chan = nil
     accum = nil
-    global = {}
 
     tshark_radiotap_to_a.each do |hash|
       cur_chan = hash[:chan]
       cur_time = hash[:time]
-      if @prev_chan != cur_chan
-        unless @prev_chan.nil?
+      if prev_chan != cur_chan
+        unless prev_chan.nil?
           # channel changed
-          totaling.call(accum, global)
+          totaling.call(accum)
         end
 
         prev_chan = cur_chan
@@ -520,11 +519,7 @@ class Pcap80211Analyzer
         }
       end
 
-      accum = yield(accum, global, hash)
-    end
-
-    if finalizer
-      finalizer.call(global)
+      accum = iteratee.call(accum, hash)
     end
   end
 
@@ -583,7 +578,7 @@ class Pcap80211Analyzer
         print "DONE: #{cmd}\n"
       rescue => e
         $stdout = STDOUT
-        print "FAILED: #{cmd} (#{e}, #{e.backtrace})\n"
+        STDERR.print "FAILED: #{cmd} (#{e}, #{e.backtrace})\n"
       end
     end
     print "<<< EXECUTE DONE>>>\n"
@@ -1297,6 +1292,81 @@ class Pcap80211Analyzer
 
       print "#{chan},#{ary.join(",")}\n"
     end
+  end
+
+  def execute_chan_goodfcs_frame_count
+    # accum = {
+    # :chan => chan,
+    # :start_time => time,
+    # :frame_count => Integer,
+    # }
+    totaling = Proc.new do |accum|
+      # time, channel, framecount
+      print "#{accum[:start_time]}, #{accum[:chan]}, #{accum[:frame_count]}\n"
+    end
+
+    iteratee = Proc.new do |accum, hash|
+      accum[:frame_count] = 0 if accum[:frame_count].nil?
+      accum[:frame_count] += 1 if hash[:badfcs] == false
+
+      accum
+    end
+
+    iterate_chan totaling, iteratee
+  end
+
+  def execute_chan_fcs_error_rate
+    # accum = {
+    #   :chan => chan,
+    #   :start_time => time,
+    #   :frame_count => Integer,
+    #   :badfcs_count => Integer,
+    # }
+    totaling = Proc.new do |accum|
+      # time, channel, percentage, frame_count, badfcs_count
+      perc = accum[:badfcs_count].to_f / accum[:frame_count].to_f * 100
+      print "#{accum[:start_time]}, #{accum[:chan]}, #{perc}, #{accum[:frame_count]}, #{accum[:badfcs_count]}\n"
+    end
+
+    iteratee = Proc.new do |accum, hash|
+      accum[:frame_count] = 0 if accum[:frame_count].nil?
+      accum[:badfcs_count] = 0 if accum[:badfcs_count].nil?
+
+      accum[:frame_count] += 1
+      accum[:badfcs_count] += 1 if hash[:badfcs] == true
+
+      accum
+    end
+
+    iterate_chan totaling, iteratee
+  end
+
+  def execute_chan_retry_rate
+    # accum = {
+    #   :chan => chan,
+    #   :start_time => time
+    #   :frame_count => Integer,
+    #   :retry_count => Integer,
+    # }
+    #
+    # avoid badfcs count
+    totaling = Proc.new do |accum|
+      perc = accum[:retry_count].to_f / accum[:frame_count].to_f * 100
+      print "#{accum[:start_time]}, #{accum[:chan]}, #{perc}, #{accum[:frame_count]}, #{accum[:retry_count]}\n"
+    end
+
+    iteratee = Proc.new do |accum, hash|
+      accum[:frame_count] = 0 if accum[:frame_count].nil?
+      accum[:retry_count] = 0 if accum[:retry_count].nil?
+
+      if hash[:badfcs] == false
+        accum[:frame_count] += 1
+        accum[:retry_count] += 1 if hash[:retry] == true
+      end
+
+      accum
+    end
+    iterate_chan totaling, iteratee
   end
 end
 
