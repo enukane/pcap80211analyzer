@@ -73,7 +73,10 @@ class Histogram < Hash
   def to_csv_value_sorted_10 keyfilter=nil
     str = ""
     sorted = self.to_a.sort {|a, b| a[1] <=> b[1]}
-    sorted10 = [["OTHER", sorted[0..-11].inject(0){|sum, elm| sum + elm[1]}]].concat(sorted[-10..-1])
+    rev_sorted = sorted.reverse
+    other = (sorted[10..-1] || []).inject(0){|sum, elm| sum + elm[1]}
+    rev_sorted10 = rev_sorted[0..9].concat([["OTHER", other]])
+    sorted10 = rev_sorted10.reverse
     sorted10.each do |key, value|
       if keyfilter and keyfilter.is_a?(Hash)
         str += "#{keyfilter[key] ? keyfilter[key] : key},#{value}\n"
