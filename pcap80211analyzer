@@ -416,10 +416,7 @@ class Pcap80211Analyzer
         :bssid    => bssid,
         :retry    => (_retry.to_i == 1),
       }
-      if elm[:chan] == nil or elm[:chan] == 0
-        p "freq #{freq} to #{elm[:chan]}"
-      end
-      next if elm[:chan] == nil
+      next if elm[:chan] == nil or elm[:chan] == 0
       ary << elm
     end
 
