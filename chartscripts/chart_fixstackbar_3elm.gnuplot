@@ -17,6 +17,9 @@ set output outputpath
 
 # set xtics rotate by -90
 #
+set key font ",20"
+set tics font ",20"
+set bmargin 3
 plot inputpath using (100.0 * $2 / ($2 + $3 + $4)):xtic(1) with histogram lw 2 lc rgb "light-blue" title name2, \
 inputpath using (100.0 * $3 / ($2 + $3 + $4)) with histogram lw 2 lc rgb "light-green" title name1, \
 inputpath using (100.0 * $4 / ($2 + $3 + $4)) with histogram lw 2 lc rgb "light-pink" title name0

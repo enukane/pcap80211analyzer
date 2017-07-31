@@ -391,7 +391,8 @@ class Pcap80211Analyzer
                      " -e 'wlan.ra'" +
                      " -e 'wlan.bssid'" +
                      " -e 'wlan.fc.retry'" +
-                     " -e 'wlan_mgt.ssid'"
+                     " -e 'wlan_mgt.ssid'" +
+                     " -e 'wlan_radio.duration'"
                     )
   end
 
@@ -401,7 +402,7 @@ class Pcap80211Analyzer
       return @cached_tshark_radiotap
     end
     tshark_radiotap().split("\n").each do |line|
-      time, framelen, taplen, rate, signal, freq, badfcs, st, ta, sa, ra, bssid, _retry, ssid = line.split(",")
+      time, framelen, taplen, rate, signal, freq, badfcs, st, ta, sa, ra, bssid, _retry, ssid, duration = line.split(",")
       elm = {
         :time     => time.to_f,
         :framelen => framelen.to_i,
@@ -417,6 +418,7 @@ class Pcap80211Analyzer
         :bssid    => bssid,
         :retry    => (_retry.to_i == 1),
         :ssid     => ssid,
+        :duration => duration.to_i,
       }
       next if elm[:chan] == nil or elm[:chan] == 0
       ary << elm
@@ -596,7 +598,7 @@ class Pcap80211Analyzer
   end
 
   def execute_all
-    cmds = list_commands()
+    cmds = list_commands().delete("all_output_csv")
 
     print "<<< EXECUTE ALL COMMANDS >>>\n\n"
     cmds.sort.each do |cmd|
@@ -680,7 +682,7 @@ class Pcap80211Analyzer
     aps.each do |addr|
       oui = addr[0..7]
       vendor = @ouisearch.execute(oui)
-      hist.add(vendor.gsub(",", ""))
+      hist.add(vendor.gsub(",", "").split[0..1].join(" "))
     end
 
     print "#{hist.to_csv_value_sorted}\n"
@@ -692,7 +694,7 @@ class Pcap80211Analyzer
     aps.each do |addr|
       oui = addr[0..7]
       vendor = @ouisearch.execute(oui)
-      hist.add(vendor.gsub(",", ""))
+      hist.add(vendor.gsub(",", "").split[0..1].join(" "))
     end
 
     print "#{hist.to_csv_value_sorted_10}\n"
@@ -713,7 +715,7 @@ class Pcap80211Analyzer
     addrs.compact.sort.uniq.each do |addr|
       oui = addr[0..7]
       vendor = @ouisearch.execute(oui)
-      hist.add(vendor.gsub(",", ""))
+      hist.add(vendor.gsub(",", "").split[0..1].join(" "))
     end
 
     print "#{hist.to_csv_value_sorted}\n"
@@ -734,7 +736,7 @@ class Pcap80211Analyzer
     addrs.compact.sort.uniq.each do |addr|
       oui = addr[0..7]
       vendor = @ouisearch.execute(oui)
-      hist.add(vendor.gsub(",", ""))
+      hist.add(vendor.gsub(",", "").split[0..1].join(" "))
     end
 
     print "#{hist.to_csv_value_sorted_10}\n"
@@ -755,7 +757,7 @@ class Pcap80211Analyzer
     addrs.compact.sort.uniq.each do |addr|
       oui = addr[0..7]
       vendor = @ouisearch.execute(oui)
-      hist.add(vendor.gsub(",", ""))
+      hist.add(vendor.gsub(",", "").split[0..1].join(" "))
     end
 
     print "#{hist.to_csv_value_sorted}\n"
@@ -776,7 +778,7 @@ class Pcap80211Analyzer
     addrs.compact.sort.uniq.each do |addr|
       oui = addr[0..7]
       vendor = @ouisearch.execute(oui)
-      hist.add(vendor.gsub(",", ""))
+      hist.add(vendor.gsub(",", "").split[0..1].join(" "))
     end
 
     print "#{hist.to_csv_value_sorted_10}\n"
@@ -902,7 +904,7 @@ class Pcap80211Analyzer
     stas.each do |addr|
       oui = addr[0..7]
       vendor = @ouisearch.execute(oui)
-      hist.add(vendor.gsub(",", ""))
+      hist.add(vendor.gsub(",", "").split[0..1].join(" "))
     end
 
     print "#{hist.to_csv_value_sorted}\n"
@@ -914,12 +916,23 @@ class Pcap80211Analyzer
     stas.each do |addr|
       oui = addr[0..7]
       vendor = @ouisearch.execute(oui)
-      hist.add(vendor.gsub(",", ""))
+      hist.add(vendor.gsub(",", "").split[0..1].join(" "))
     end
 
     print "#{hist.to_csv_value_sorted_10}\n"
   end
 
+  def execute_uniq_sta_with_data_histogram_10
+    hist = Histogram.new
+    stas = uniq_stas_with_data
+    stas.each do |addr|
+      oui = addr[0..7]
+      vendor = @ouisearch.execute(oui)
+      hist.add(vendor.gsub(",", "").split[0..1].join(" "))
+    end
+
+    print "#{hist.to_csv_value_sorted_10}\n"
+  end
 
   def execute_channel_histogram
     hist = Histogram.new
@@ -1340,7 +1353,7 @@ class Pcap80211Analyzer
       if _hist == nil
         str += "0,0,0\n"
       else
-        str += "#{_hist['Management']},#{_hist['Control']},#{_hist['Data']}\n"
+        str += "#{_hist['Management'] || 0},#{_hist['Control'] || 0},#{_hist['Data'] || 0}\n"
       end
     end
 
@@ -1416,6 +1429,44 @@ class Pcap80211Analyzer
       print "#{chan},#{ary.join(",")}\n"
     end
   end
+
+  def execute_channel_datarate_data_noretry_histogram
+    hist = Histogram.new
+    tshark_radiotap_each do |hash|
+      st = hash[:st]
+      rate = hash[:rate]
+      chan = hash[:chan]
+      next unless 0x20 <= st and st < 0x30
+      next if hash[:retry]
+      next if rate == 0
+      key = "#{chan}_#{rate}"
+      hist.add(key)
+    end
+
+
+    print "rate,"
+    print DATARATES.join(",") + "\n"
+
+    CHANNELS.sort.each do |chan|
+      next if chan == 0
+      ary = DATARATES.map do |rate|
+        key = "#{chan}_#{rate}"
+        if hist[key] == nil
+          0
+        else
+          hist[key]
+        end
+      end
+
+      sum = ary.inject {|acc, elm| acc + elm}
+      ary = ary.map do |elm|
+        elm.to_f / sum * 100.0
+      end
+
+      print "#{chan},#{ary.join(",")}\n"
+    end
+  end
+
 
   def execute_chan_goodfcs_frame_count
     # accum = {
@@ -1505,6 +1556,205 @@ class Pcap80211Analyzer
 
   def execute_uniq_ssid_histogram_10
     print "#{uniq_ssid_histogram().to_csv_value_sorted_10}\n"
+  end
+
+  def execute_ap_recognized_span
+    bssid_hash = {} # {:start_time, :last_time}
+    blacklist = []
+    tshark_radiotap_each do |hash|
+      time = hash[:time]
+      ta = hash[:ta]
+      st = hash[:st]
+
+      next unless st == 8 or st == 5
+
+      bssid_hash[ta] = {} if bssid_hash[ta].nil?
+      bssid_hash[ta][:start_time] = time if bssid_hash[ta][:start_time].nil?
+      bssid_hash[ta][:last_time] = time if bssid_hash[ta][:last_time].nil?
+      if bssid_hash[ta][:last_time] < time
+        bssid_hash[ta][:last_time] = time
+      end
+    end
+
+    bssid_hash.to_a.map{|elm|
+      ta = elm[0]
+      diff = elm[1][:last_time] - elm[1][:start_time]
+      [ta, diff]
+    }.sort{|a, b|
+      a[1] <=> b[1]
+    }.each do |elm|
+      print "#{elm[0]}, #{elm[1]}\n"
+    end
+  end
+
+  def execute_sta_wo_ap_recognized_span
+    aps = uniq_aps()
+    sta_hash = {} # {:start_time, :last_time}
+    tshark_radiotap_each do |hash|
+      time = hash[:time]
+      ta = hash[:ta]
+      st = hash[:st]
+
+      next if st == 8 or st == 5
+
+      sta_hash[ta] = {} if sta_hash[ta].nil?
+      sta_hash[ta][:start_time] = time if sta_hash[ta][:start_time].nil?
+      sta_hash[ta][:last_time] = time if sta_hash[ta][:last_time].nil?
+      if sta_hash[ta][:last_time] < time
+        sta_hash[ta][:last_time] = time
+      end
+    end
+
+    sta_hash.delete_if {|key, value|
+      aps.include?(key)
+    }.to_a.map{|elm|
+      ta = elm[0]
+      diff = elm[1][:last_time] - elm[1][:start_time]
+      [ta, diff]
+    }.sort{|a, b|
+      a[1] <=> b[1]
+    }.each do |elm|
+      print "#{elm[0]}, #{elm[1]}\n"
+    end
+  end
+
+  def execute_chan_probereq_frame_count
+    totaling = Proc.new do |accum|
+      print "#{accum[:start_time]}, #{accum[:chan]}, #{accum[:frame_count]}\n"
+    end
+
+    iteratee = Proc.new do |accum, hash|
+      accum[:frame_count] = 0 if accum[:frame_count].nil?
+      accum[:frame_count] += 1 if hash[:badfcs] == false and hash[:st] == 0x04
+      accum
+    end
+
+    iterate_chan totaling, iteratee
+  end
+
+  def execute_null_data_frame_retry_count
+    totaling = Proc.new do |accum|
+      perc = accum[:retry_count].to_f / accum[:frame_count].to_f * 100
+      print "#{accum[:start_time]}, #{accum[:chan]}, #{perc}, #{accum[:frame_count]}, #{accum[:retry_count]}\n"
+    end
+
+    iteratee = Proc.new do |accum, hash|
+      accum[:frame_count] = 0 if accum[:frame_count].nil?
+      accum[:retry_count] = 0 if accum[:retry_count].nil?
+
+      next accum if hash[:badfcs] == true
+
+      case hash[:st]
+      when 36,37,38,39,44,46,47
+        accum[:frame_count] += 1
+        accum[:retry_count] += 1 if hash[:retry] == true
+      end
+
+      accum
+    end
+
+    iterate_chan totaling, iteratee
+
+  end
+
+  def execute_chan_data_n_ba_frame_rate
+    totaling = Proc.new do |accum|
+      accum[:data_n_ba_frame_count] = accum[:data_frame_count] + accum[:ba_frame_count]
+      perc = accum[:data_n_ba_frame_count].to_f / accum[:frame_count].to_f * 100
+      data_perc = accum[:data_frame_count].to_f / accum[:frame_count].to_f * 100
+      ba_perc = accum[:ba_frame_count].to_f / accum[:frame_count].to_f * 100
+
+      # start_time, chan, data/ba %, data %, ba %, data/ba count, data count,
+      # ba count
+      print "#{accum[:start_time]}, #{accum[:chan]}, #{perc}, #{data_perc}, #{ba_perc}, #{accum[:data_n_ba_frame_count]}, #{accum[:data_frame_count]}, #{accum[:ba_frame_count]}\n"
+    end
+
+    iteratee = Proc.new do |accum, hash|
+      accum[:frame_count] = 0 if accum[:frame_count].nil?
+      accum[:data_frame_count] = 0 if accum[:data_frame_count].nil?
+      accum[:ba_frame_count] = 0 if accum[:ba_frame_count].nil?
+
+      next accum if hash[:badfcs] == true
+      next accum if hash[:retry] == true
+
+      accum[:frame_count] += 1
+
+      case hash[:st]
+      when 25
+        accum[:ba_frame_count] += 1
+      when 32,33,34,35, 40,41,42,43
+        accum[:data_frame_count] += 1
+      end
+
+      accum
+    end
+
+    iterate_chan totaling, iteratee
+  end
+
+  def execute_chan_duration
+    totaling = Proc.new do |accum|
+      sec = 1000.0 * 1000.0
+      perc = accum[:sum_duration] / sec * 100.0
+
+      data_perc = accum[:sum_data_duration] / sec * 100.0
+      print "#{accum[:start_time]}, #{accum[:chan]}, #{accum[:sum_duration]}, #{perc}, #{accum[:sum_data_duration]}, #{data_perc}, #{accum[:sum_data_length]}\n"
+    end
+
+    iteratee = Proc.new do |accum, hash|
+      accum[:sum_duration] = 0 if accum[:sum_duration].nil?
+      accum[:sum_data_duration] = 0 if accum[:sum_data_duration].nil?
+      accum[:sum_data_length] = 0 if accum[:sum_data_length].nil?
+
+      next accum if hash[:badfcs] == true
+
+      case hash[:st]
+      when 32,33,34,35, 40,41,42,43
+        accum[:sum_data_duration] += hash[:duration]
+        accum[:sum_data_length] += (hash[:framelen] - hash[:taplen])
+      end
+
+      accum[:sum_duration] += hash[:duration]
+
+      accum
+    end
+
+    iterate_chan totaling, iteratee
+  end
+
+  def execute_chan_ba_frame_count
+    totaling = Proc.new do |accum|
+      print "#{accum[:start_time]}, #{accum[:chan]}, #{accum[:frame_count]}\n"
+    end
+
+    iteratee = Proc.new do |accum, hash|
+      accum[:frame_count] = 0 if accum[:frame_count].nil?
+
+      next accum if hash[:badfcs] == true
+      next accum if hash[:retry] == true
+
+      case hash[:st]
+      when 25
+        accum[:frame_count] += 1
+      end
+
+      accum
+    end
+
+    iterate_chan totaling, iteratee
+  end
+
+  def execute_w58_uniq_sta
+    w58_stas = []
+    tshark_radiotap_each do |hash|
+      next if hash[:chan] < 144
+
+      w58_stas << hash[:ta]
+    end
+
+    w58_stas.sort.uniq.each do |sta|
+      print "#{sta}\n"
+    end
   end
 end
 

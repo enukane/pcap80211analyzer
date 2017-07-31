@@ -1,7 +1,8 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import pandas as pd
-from urllib2 import urlopen
+#from urllib2 import urlopen
 import numpy as np
 import sys
 
@@ -21,7 +22,7 @@ fig = plt.gcf()
 ax.set_frame_on(False)
 
 # put the major ticks at the middle of each cell
-ax.set_yticks(np.arange(nba.shape[0]) + 0.5, minor=False)
+ax.set_yticks(np.arange(nba.shape[0]) + 0.5, minor=True)
 ax.set_xticks(np.arange(nba.shape[1]) + 0.5, minor=False)
 
 # want a more natural, table-like display
@@ -40,10 +41,15 @@ labels = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
 
 ax.set_xticklabels(labels, minor=False)
 ax.set_yticklabels(nba.index, minor=False)
+#ax.yaxis_date()
+#ax.yaxis.set_major_locator(mdates.AutoDateLocator())
+#ax.yaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
 
 # rotate
 plt.xticks(rotation=90, fontsize=10)
-plt.yticks(fontsize=5)
+#plt.yticks(fontsize=18)
+plt.tick_params(labelsize=10)
+
 
 ax.grid(False)
 
@@ -53,14 +59,14 @@ ax = plt.gca()
 for t in ax.xaxis.get_major_ticks():
 	t.tick1On = False
 	t.tick2On = False
-for t in ax.yaxis.get_major_ticks():
-	t.tick1On = False
-	t.tick2On = False
+#for t in ax.yaxis.get_major_ticks():
+#	t.tick1On = False
+#	t.tick2On = False
 
 
 #plt.show()
 #plt.title("Channel Utilization", fontsize=20)
 plt.colorbar(heatmap)
-plt.xlabel("channel", fontsize=8)
-plt.ylabel("time", fontsize=8)
+plt.xlabel("channel", fontsize=18)
+plt.ylabel("time", fontsize=18)
 plt.savefig(output)

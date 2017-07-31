@@ -1,14 +1,18 @@
-#!/usr/bin/ruby
+#!/usr/bin/env ruby
 
+require 'ouisearch/version'
 require 'optparse'
 require 'faraday'
 
 class OuiSearch
-  URL="www.ieee.org/netstorage/standards/oui.txt"
-  URLHOST="http://www.ieee.org"
-  URLPATH="/netstorage/standards/oui.txt"
+  #URL="http://standards-oui.ieee.org/oui.txt"
+  URL="http://linuxnet.ca/ieee/oui.txt"
+  #URLHOST="http://standards-oui.ieee.org"
+  URLHOST="http://linuxnet.ca/"
+  #URLPATH="/oui.txt"
+  URLPATH="/ieee/oui.txt"
   CACHE="#{ENV['HOME']}/.oui"
-  REG=/^\s+(..)-(..)-(..)\s+\(hex\)\s+(.+)$/
+  REG=/^\s*(..)-(..)-(..)\s+\(hex\)\s+(.+)$/
 
   def initialize args={}
     @reload = args[:reload] || false
@@ -19,6 +23,17 @@ class OuiSearch
   end
 
   def execute oui
+    if oui.length != 8
+      return "<UNKNOWN>"
+    end
+    oui = oui.upcase
+    octet0 = oui[0..1].hex & 0xfd
+    octet0_str = octet0.to_s(16)
+    if octet0 < 16
+      octet0_str = "0" + octet0_str
+    end
+    oui = octet0_str + ":" + oui[3..7]
+
     vendor = @ouis[oui.upcase]
     if vendor
       return vendor.strip

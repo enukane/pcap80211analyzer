@@ -6,17 +6,20 @@ require "tempfile"
 
 class Charter
   TYPE_BAR="bar"
+  TYPE_BAR_AUTO="bar_auto"
   TYPE_STACK_3ELM="stack3elm"
   TYPE_FIXSTACK_3ELM="fixstack3elm"
 
   SUPPORTED_TYPES=[
     TYPE_BAR,
+    TYPE_BAR_AUTO,
     TYPE_STACK_3ELM,
     TYPE_FIXSTACK_3ELM,
   ]
 
   PATH_PREFIX="chartscripts"
   PATH_BAR="#{PATH_PREFIX}/chart_bar.gnuplot"
+  PATH_BAR_AUTO="#{PATH_PREFIX}/chart_bar_auto.gnuplot"
   PATH_STACK_3ELM="#{PATH_PREFIX}/chart_stackbar_3elm.gnuplot"
   PATH_FIXSTACK_3ELM="#{PATH_PREFIX}/chart_fixstackbar_3elm.gnuplot"
 
@@ -80,6 +83,16 @@ class Charter
     }
 
     return gnuplot(PATH_BAR, eargs)
+  end
+
+  def execute_bar_auto path, args
+    eargs = {
+      "inputpath" => path,
+      "outputpath" => @output,
+      "name" => args[0],
+    }
+
+    return gnuplot(PATH_BAR_AUTO, eargs)
   end
 
   def execute_stack3elm path, args

@@ -4,10 +4,15 @@ require "optparse"
 
 class Summarizer
   TYPE_BAR="bar"
+  TYPE_BAR_AUTO="bar_auto"
   TYPE_STACK3ELM="stack3elm"
   TYPE_FIXSTACK_3ELM="fixstack3elm"
   TYPE_DATARATEMAP="dataratemap"
   TYPE_CHANUTIL="chanutil"
+  TYPE_PLOTCHAN="plotchan"
+  TYPE_HISTCHAN="histchan"
+  TYPE_HISTVIS="histvis"
+  BANDS = ["24", "24s", "24x", "24xn", "24xf", "52", "53", "56", "58"]
 
   def self.default_options
     {
@@ -19,22 +24,46 @@ class Summarizer
   def initialize args={}
     @name = args[:name]
     @readfrom = OPTS[:readfrom]
+    @utillog = OPTS[:utillog]
   end
 
-  def do_graph(type, metric)
-    print "EXECUTE: mertic = #{metric}, type = #{type}\n"
-    output = "#{@name}/#{metric}.png"
+  def do_graph(type, metric, suffix=nil, args={})
+    print "EXECUTE: mertic = #{metric}, type = #{type} suffix = '#{suffix} args = '#{args}'\n"
+    output = "#{@name}/#{metric}"
+    output += suffix if suffix
+    output_base = output
+    output += ".png"
     input = "#{@name}/#{metric}.csv"
     ret = false
     case type
-    when TYPE_BAR, TYPE_STACK3ELM, TYPE_FIXSTACK_3ELM
+    when TYPE_BAR, TYPE_BAR_AUTO, TYPE_STACK3ELM, TYPE_FIXSTACK_3ELM
       ret = system("./charter -t #{type} -o #{output} #{input}")
     when TYPE_DATARATEMAP
       ret = system("./dataratemap #{input}")
     when TYPE_CHANUTIL
-      input_log = "#{@name}/#{metric}.log"
+      input_log = @utillog
       ret = system("./utillog2hash #{input_log} > #{input}")
       ret = system("./chanutilmap #{input}")
+    when TYPE_PLOTCHAN
+      row_opt = ""
+      row_opt = "-r #{args[:row_idx]}" if args and !args[:row_idx].nil?
+      ret = true
+      BANDS.each do |band|
+        band_output = "#{@name}/#{metric}-#{band}#{row_opt.split.join}_plot.png"
+        ret &= system("python ./channel_separate_plot.py -i #{input} -b #{band} -o #{band_output} #{row_opt}")
+      end
+    when TYPE_HISTCHAN
+      row_opt = ""
+      row_opt = "-r #{args[:row_idx]}" if args and !args[:row_idx].nil?
+      ret = true
+      BANDS.each do |band|
+        band_output = "#{@name}/#{metric}-#{band}#{row_opt.split.join}_hist.png"
+        ret &= system("python ./channel_separate_hist.py -i #{input} -b #{band} -o #{band_output} #{row_opt}")
+      end
+    when TYPE_HISTVIS
+      ret = system("python ./visible_hist.py -i #{input} -o #{output}")
+      ret &= system("python ./visible_hist.py -i #{input} -o #{output_base + "_no0.png"} -Z")
+      ret &= system("python ./visible_hist.py -i #{input} -o #{output_base + "_over10m.png"} -L 600")
     end
 
     unless ret
@@ -49,7 +78,7 @@ class Summarizer
       end
       Dir.mkdir(@name)
     end
-    unless system("./pcap80211analyzer -r #{@readfrom} -c #{@name} all_output_csv}")
+    unless system("./pcap80211analyzer -r #{@readfrom} -c #{@name} all_output_csv")
       raise "failed to output csv"
     end
   end
@@ -62,8 +91,8 @@ class Summarizer
     do_graph(TYPE_BAR, "channel_sta_data_histogram")
     do_graph(TYPE_BAR, "channel_sta_wo_ap_histogram")
     do_graph(TYPE_BAR, "channel_sta_data_wo_ap_histogram")
-    do_graph(TYPE_STACK3ELM, "channel_type_histogram")
-    do_graph(TYPE_FIXSTACK_3ELM, "channel_type_histogram")
+    do_graph(TYPE_STACK3ELM, "channel_type_histogram", "stacked")
+    do_graph(TYPE_FIXSTACK_3ELM, "channel_type_histogram", "stacknfix")
     do_graph(TYPE_BAR, "subtype_histogram")
     do_graph(TYPE_BAR, "subtype_24_histogram")
     do_graph(TYPE_BAR, "subtype_5_histogram")
@@ -77,9 +106,40 @@ class Summarizer
     do_graph(TYPE_BAR, "uniq_ap_oui_24_histogram_10")
     do_graph(TYPE_BAR, "uniq_ap_oui_5_histogram_10")
     do_graph(TYPE_BAR, "uniq_sta_oui_histogram_10")
+    do_graph(TYPE_BAR, "uniq_sta_with_data_histogram_10")
     do_graph(TYPE_DATARATEMAP, "channel_datarate_data_histogram")
     do_graph(TYPE_DATARATEMAP, "channel_datarate_histogram")
+    do_graph(TYPE_DATARATEMAP, "channel_datarate_data_noretry_histogram")
     do_graph(TYPE_CHANUTIL, "#{@name}_util")
+    do_graph(TYPE_PLOTCHAN, "chan_fcs_error_rate")
+    do_graph(TYPE_PLOTCHAN, "chan_goodfcs_frame_count")
+    do_graph(TYPE_PLOTCHAN, "chan_retry_rate")
+    do_graph(TYPE_PLOTCHAN, "chan_probereq_frame_count")
+    do_graph(TYPE_PLOTCHAN, "null_data_frame_retry_count")
+    do_graph(TYPE_HISTCHAN, "chan_fcs_error_rate")
+    do_graph(TYPE_HISTCHAN, "chan_goodfcs_frame_count")
+    do_graph(TYPE_HISTCHAN, "chan_retry_rate")
+    do_graph(TYPE_HISTCHAN, "chan_probereq_frame_count")
+    do_graph(TYPE_HISTCHAN, "null_data_frame_retry_count")
+    do_graph(TYPE_HISTVIS, "ap_recognized_span")
+    do_graph(TYPE_HISTVIS, "sta_wo_ap_recognized_span")
+    do_graph(TYPE_HISTVIS, "sta_wo_ap_recognized_span.unknown")
+    do_graph(TYPE_PLOTCHAN, "chan_ba_frame_count")
+    do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_frame_rate")
+    do_graph(TYPE_HISTCHAN, "chan_data_n_ba_frame_rate")
+    do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_frame_rate", "dataonly", {:row_idx => 3})
+    do_graph(TYPE_HISTCHAN, "chan_data_n_ba_frame_rate", "dataonly", {:row_idx => 3})
+    do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_frame_rate", "baonly", {:row_idx => 4})
+    do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_frame_rate", "databacnt", {:row_idx => 5})
+    do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_frame_rate", "datacnt", {:row_idx => 6})
+    do_graph(TYPE_PLOTCHAN, "chan_duration")
+    do_graph(TYPE_PLOTCHAN, "chan_duration", "ocp", {:row_idx => 3})
+    do_graph(TYPE_HISTCHAN, "chan_duration", "ocp", {:row_idx => 3})
+    do_graph(TYPE_PLOTCHAN, "chan_duration", "data", {:row_idx => 4})
+    do_graph(TYPE_PLOTCHAN, "chan_duration", "dataocp", {:row_idx => 5})
+    do_graph(TYPE_HISTCHAN, "chan_duration", "dataocp", {:row_idx => 5})
+    do_graph(TYPE_PLOTCHAN, "chan_duration", "datalen", {:row_idx => 6})
+
   end
 end
 
@@ -92,6 +152,7 @@ if __FILE__ == $0
   opt.on("-n VAL") {|v| OPTS[:name] = v}
   opt.on("-r VAL") {|v| OPTS[:readfrom] = v }
   opt.on("-g") {|v| OPTS[:graphonly] = true }
+  opt.on("-u VAL") {|v| OPTS[:utillog] = v }
 
   opt.parse!(args)
 
