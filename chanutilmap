@@ -9,7 +9,8 @@ import sys
 argvs = sys.argv
 
 fname = argvs[1]
-output = fname.split(".")[0] + ".png"
+output = argvs[2]
+#output = fname.split(".")[0] + ".png"
 
 nba = pd.read_csv(fname, index_col=0)
 plt.figure(figsize=(84, 64))

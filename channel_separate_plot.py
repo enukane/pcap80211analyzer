@@ -23,6 +23,10 @@ CHAN52 = [36, 40, 44, 48]
 CHAN53 = [52, 56, 60, 64]
 # 56
 CHAN56 = [100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140]
+# 56f
+CHAN56F = [100, 104, 108, 112, 116, 120]
+# 56l
+CHAN56L = [124, 128, 132, 136, 140]
 # 58
 CHAN58 = [ 149, 153, 157, 161, 166 ]
 
@@ -47,6 +51,10 @@ def bands2chans(bands):
         chans = chans + CHAN53
     if "56" in bands:
         chans = chans + CHAN56
+    if "56f" in bands:
+        chans = chans + CHAN56F
+    if "56l" in bands:
+        chans = chans + CHAN56L
     if "58" in bands:
         chans = chans + CHAN58
     return chans

@@ -12,7 +12,7 @@ class Summarizer
   TYPE_PLOTCHAN="plotchan"
   TYPE_HISTCHAN="histchan"
   TYPE_HISTVIS="histvis"
-  BANDS = ["24", "24s", "24x", "24xn", "24xf", "52", "53", "56", "58"]
+  BANDS = ["24", "24s", "24x", "24xn", "24xf", "52", "53", "56", "56f", "56l", "58"]
 
   def self.default_options
     {
@@ -27,9 +27,11 @@ class Summarizer
     @utillog = OPTS[:utillog]
   end
 
-  def do_graph(type, metric, suffix=nil, args={})
+  def do_graph(type, metric, prefix=nil, suffix=nil, args={})
     print "EXECUTE: mertic = #{metric}, type = #{type} suffix = '#{suffix} args = '#{args}'\n"
-    output = "#{@name}/#{metric}"
+    output = "#{@name}/"
+    output += prefix if prefix
+    output += "#{metric}"
     output += suffix if suffix
     output_base = output
     output += ".png"
@@ -39,17 +41,28 @@ class Summarizer
     when TYPE_BAR, TYPE_BAR_AUTO, TYPE_STACK3ELM, TYPE_FIXSTACK_3ELM
       ret = system("./charter -t #{type} -o #{output} #{input}")
     when TYPE_DATARATEMAP
-      ret = system("./dataratemap #{input}")
+      ret = system("./dataratemap #{input} #{output}")
     when TYPE_CHANUTIL
       input_log = @utillog
-      ret = system("./utillog2hash #{input_log} > #{input}")
-      ret = system("./chanutilmap #{input}")
+      if input_log.nil? or !File.exists?(input_log)
+        p "no utilization log specified, skip"
+        return
+      end
+      ret &= system("./utillog2hash #{input_log} > #{input}")
+      ret &= system("./chanutilmap #{input} #{output}")
+
+      input = "#{@name}/#{metric}.chan.csv"
+      ret &= system("./utillog2csv #{input_log} > #{input}")
+      BANDS.each do |band|
+        band_output = "#{@name}/#{prefix}#{metric}-#{band}_plot.png"
+        ret &= system("python ./channel_separate_plot.py -i #{input} -b #{band} -o #{band_output}")
+      end
     when TYPE_PLOTCHAN
       row_opt = ""
       row_opt = "-r #{args[:row_idx]}" if args and !args[:row_idx].nil?
       ret = true
       BANDS.each do |band|
-        band_output = "#{@name}/#{metric}-#{band}#{row_opt.split.join}_plot.png"
+        band_output = "#{@name}/#{prefix}#{metric}-#{band}#{row_opt.split.join}_plot.png"
         ret &= system("python ./channel_separate_plot.py -i #{input} -b #{band} -o #{band_output} #{row_opt}")
       end
     when TYPE_HISTCHAN
@@ -57,7 +70,8 @@ class Summarizer
       row_opt = "-r #{args[:row_idx]}" if args and !args[:row_idx].nil?
       ret = true
       BANDS.each do |band|
-        band_output = "#{@name}/#{metric}-#{band}#{row_opt.split.join}_hist.png"
+        band_output = "#{@name}/#{prefix}#{metric}-#{band}#{row_opt.split.join}_hist.png"
+        p "processing #{band_output}"
         ret &= system("python ./channel_separate_hist.py -i #{input} -b #{band} -o #{band_output} #{row_opt}")
       end
     when TYPE_HISTVIS
@@ -84,62 +98,64 @@ class Summarizer
   end
 
   def output_graph
-    do_graph(TYPE_BAR, "channel_ap_histogram")
-    do_graph(TYPE_BAR, "channel_ap_data_histogram")
-    do_graph(TYPE_BAR, "channel_sta_histogram")
-    do_graph(TYPE_BAR, "channel_sta_wo_ap_histogram")
-    do_graph(TYPE_BAR, "channel_sta_data_histogram")
-    do_graph(TYPE_BAR, "channel_sta_wo_ap_histogram")
-    do_graph(TYPE_BAR, "channel_sta_data_wo_ap_histogram")
-    do_graph(TYPE_STACK3ELM, "channel_type_histogram", "stacked")
-    do_graph(TYPE_FIXSTACK_3ELM, "channel_type_histogram", "stacknfix")
-    do_graph(TYPE_BAR, "subtype_histogram")
-    do_graph(TYPE_BAR, "subtype_24_histogram")
-    do_graph(TYPE_BAR, "subtype_5_histogram")
-    do_graph(TYPE_BAR, "rate_histogram")
-    do_graph(TYPE_BAR, "rate_24_histogram")
-    do_graph(TYPE_BAR, "rate_5_histogram")
-    do_graph(TYPE_BAR, "data_rate_histogram")
-    do_graph(TYPE_BAR, "data_rate_24_histogram")
-    do_graph(TYPE_BAR, "data_rate_5_histogram")
-    do_graph(TYPE_BAR, "uniq_ap_oui_histogram_10")
-    do_graph(TYPE_BAR, "uniq_ap_oui_24_histogram_10")
-    do_graph(TYPE_BAR, "uniq_ap_oui_5_histogram_10")
-    do_graph(TYPE_BAR, "uniq_sta_oui_histogram_10")
-    do_graph(TYPE_BAR, "uniq_sta_with_data_histogram_10")
-    do_graph(TYPE_DATARATEMAP, "channel_datarate_data_histogram")
-    do_graph(TYPE_DATARATEMAP, "channel_datarate_histogram")
-    do_graph(TYPE_DATARATEMAP, "channel_datarate_data_noretry_histogram")
-    do_graph(TYPE_CHANUTIL, "#{@name}_util")
-    do_graph(TYPE_PLOTCHAN, "chan_fcs_error_rate")
-    do_graph(TYPE_PLOTCHAN, "chan_goodfcs_frame_count")
-    do_graph(TYPE_PLOTCHAN, "chan_retry_rate")
+    do_graph(TYPE_BAR, "channel_ap_histogram", "1__")
+    do_graph(TYPE_BAR, "channel_ap_data_histogram", "1_1_")
+    do_graph(TYPE_BAR, "channel_sta_histogram", "2__")
+    do_graph(TYPE_BAR, "channel_sta_wo_ap_histogram", "3__")
+    do_graph(TYPE_BAR, "channel_sta_data_histogram", "4__")
+    do_graph(TYPE_BAR, "channel_sta_data_wo_ap_histogram", "5__")
+    do_graph(TYPE_STACK3ELM, "channel_type_histogram", "6__", "stacked")
+    do_graph(TYPE_FIXSTACK_3ELM, "channel_type_histogram", "7__", "stacknfix")
+    do_graph(TYPE_BAR, "subtype_histogram", "8__")
+    do_graph(TYPE_BAR, "subtype_24_histogram", "8_1_")
+    do_graph(TYPE_BAR, "subtype_5_histogram", "8_2_")
+    do_graph(TYPE_BAR, "rate_histogram", "9__")
+    do_graph(TYPE_BAR, "rate_24_histogram", "9_1_")
+    do_graph(TYPE_BAR, "rate_5_histogram", "9_2_")
+    do_graph(TYPE_BAR, "data_rate_histogram", "10__")
+    do_graph(TYPE_BAR, "data_rate_24_histogram", "10_1_")
+    do_graph(TYPE_BAR, "data_rate_5_histogram", "10_2_")
+    do_graph(TYPE_BAR, "uniq_ap_oui_histogram_10", "11__")
+    do_graph(TYPE_BAR, "uniq_ap_oui_24_histogram_10", "11_1_")
+    do_graph(TYPE_BAR, "uniq_ap_oui_5_histogram_10", "11_2_")
+    do_graph(TYPE_BAR, "uniq_sta_oui_histogram_10", "12__")
+    do_graph(TYPE_BAR, "uniq_sta_with_data_histogram_10", "12_1_")
+    do_graph(TYPE_DATARATEMAP, "channel_datarate_data_histogram", "10_3_")
+    do_graph(TYPE_DATARATEMAP, "channel_datarate_histogram", "9_3_")
+    do_graph(TYPE_DATARATEMAP, "channel_datarate_data_noretry_histogram") # skip?
+    do_graph(TYPE_CHANUTIL, "#{@name}_util", "13__")
+    do_graph(TYPE_PLOTCHAN, "chan_fcs_error_rate", "15__")
+    do_graph(TYPE_PLOTCHAN, "chan_goodfcs_frame_count", "14__")
+    do_graph(TYPE_PLOTCHAN, "chan_retry_rate") # only hist required?
     do_graph(TYPE_PLOTCHAN, "chan_probereq_frame_count")
-    do_graph(TYPE_PLOTCHAN, "null_data_frame_retry_count")
-    do_graph(TYPE_HISTCHAN, "chan_fcs_error_rate")
+    do_graph(TYPE_PLOTCHAN, "null_data_frame_retry_count") # upgrade?
+    do_graph(TYPE_HISTCHAN, "chan_fcs_error_rate", "16__")
     do_graph(TYPE_HISTCHAN, "chan_goodfcs_frame_count")
-    do_graph(TYPE_HISTCHAN, "chan_retry_rate")
-    do_graph(TYPE_HISTCHAN, "chan_probereq_frame_count")
-    do_graph(TYPE_HISTCHAN, "null_data_frame_retry_count")
-    do_graph(TYPE_HISTVIS, "ap_recognized_span")
-    do_graph(TYPE_HISTVIS, "sta_wo_ap_recognized_span")
-    do_graph(TYPE_HISTVIS, "sta_wo_ap_recognized_span.unknown")
-    do_graph(TYPE_PLOTCHAN, "chan_ba_frame_count")
+    do_graph(TYPE_HISTCHAN, "chan_retry_rate", "17__")
+    do_graph(TYPE_HISTCHAN, "chan_probereq_frame_count") # skip?
+    do_graph(TYPE_PLOTCHAN, "null_data_frame_retry_count", "24__") # upgrade
+    do_graph(TYPE_HISTCHAN, "null_data_frame_retry_count", "24__") # upgrade
+    do_graph(TYPE_PLOTCHAN, "null_data_frame_retry_count", "24__", nil, {:row_idx => 3}) # upgrade
+    do_graph(TYPE_HISTVIS, "ap_recognized_span", "18__")
+    do_graph(TYPE_HISTVIS, "sta_wo_ap_recognized_span", "19__")
+    do_graph(TYPE_HISTVIS, "sta_wo_ap_recognized_span.unknown") # unknown?
+    do_graph(TYPE_PLOTCHAN, "chan_ba_frame_count") # skip?
     do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_frame_rate")
     do_graph(TYPE_HISTCHAN, "chan_data_n_ba_frame_rate")
-    do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_frame_rate", "dataonly", {:row_idx => 3})
-    do_graph(TYPE_HISTCHAN, "chan_data_n_ba_frame_rate", "dataonly", {:row_idx => 3})
-    do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_frame_rate", "baonly", {:row_idx => 4})
-    do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_frame_rate", "databacnt", {:row_idx => 5})
-    do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_frame_rate", "datacnt", {:row_idx => 6})
+    do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_frame_rate", nil, "dataonly", {:row_idx => 3})
+    do_graph(TYPE_HISTCHAN, "chan_data_n_ba_frame_rate", nil, "dataonly", {:row_idx => 3})
+    do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_frame_rate", nil, "baonly", {:row_idx => 4})
+    do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_frame_rate", "20__", "databacnt", {:row_idx => 5})
+    do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_frame_rate", nil, "datacnt", {:row_idx => 6})
     do_graph(TYPE_PLOTCHAN, "chan_duration")
-    do_graph(TYPE_PLOTCHAN, "chan_duration", "ocp", {:row_idx => 3})
-    do_graph(TYPE_HISTCHAN, "chan_duration", "ocp", {:row_idx => 3})
-    do_graph(TYPE_PLOTCHAN, "chan_duration", "data", {:row_idx => 4})
-    do_graph(TYPE_PLOTCHAN, "chan_duration", "dataocp", {:row_idx => 5})
-    do_graph(TYPE_HISTCHAN, "chan_duration", "dataocp", {:row_idx => 5})
-    do_graph(TYPE_PLOTCHAN, "chan_duration", "datalen", {:row_idx => 6})
-
+    do_graph(TYPE_PLOTCHAN, "chan_duration", "21__", "ocp", {:row_idx => 3})
+    do_graph(TYPE_HISTCHAN, "chan_duration", nil, "ocp", {:row_idx => 3})
+    do_graph(TYPE_PLOTCHAN, "chan_duration", nil, "data", {:row_idx => 4})
+    do_graph(TYPE_PLOTCHAN, "chan_duration", "22__", "dataocp", {:row_idx => 5})
+    do_graph(TYPE_HISTCHAN, "chan_duration", nil, "dataocp", {:row_idx => 5})
+    do_graph(TYPE_PLOTCHAN, "chan_duration", nil, "datalen", {:row_idx => 6})
+    do_graph(TYPE_PLOTCHAN, "chan_data_frame_count")
+    do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_bit_frame_count", "23__")
   end
 end
 

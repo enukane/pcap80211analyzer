@@ -4,6 +4,7 @@ $:.unshift File.dirname(__FILE__)
 
 require "optparse"
 require "ouisearch.rb"
+require "bit_utils"
 
 class Histogram < Hash
   def initialize
@@ -392,7 +393,10 @@ class Pcap80211Analyzer
                      " -e 'wlan.bssid'" +
                      " -e 'wlan.fc.retry'" +
                      " -e 'wlan_mgt.ssid'" +
-                     " -e 'wlan_radio.duration'"
+                     " -e 'wlan_radio.duration'" +
+                     " -e 'wlan_mgt.fixed.ssc.sequence'" +
+                     " -e 'wlan.ba.bm'" +
+                     " -e 'radiotap.mcs.index'"
                     )
   end
 
@@ -402,7 +406,7 @@ class Pcap80211Analyzer
       return @cached_tshark_radiotap
     end
     tshark_radiotap().split("\n").each do |line|
-      time, framelen, taplen, rate, signal, freq, badfcs, st, ta, sa, ra, bssid, _retry, ssid, duration = line.split(",")
+      time, framelen, taplen, rate, signal, freq, badfcs, st, ta, sa, ra, bssid, _retry, ssid, duration, ba_start, ba_bm, ht_mcs = line.split(",")
       elm = {
         :time     => time.to_f,
         :framelen => framelen.to_i,
@@ -419,6 +423,9 @@ class Pcap80211Analyzer
         :retry    => (_retry.to_i == 1),
         :ssid     => ssid,
         :duration => duration.to_i,
+        :ba_start => ba_start.to_i,
+        :ba_bm    => ba_bm.nil? ? 0 : ba_bm.split(":").join.to_i(16),
+        :ht_mcs   => ht_mcs.nil? ? -1 : ht_mcs.to_i,
       }
       next if elm[:chan] == nil or elm[:chan] == 0
       ary << elm
@@ -1635,7 +1642,17 @@ class Pcap80211Analyzer
   def execute_null_data_frame_retry_count
     totaling = Proc.new do |accum|
       perc = accum[:retry_count].to_f / accum[:frame_count].to_f * 100
-      print "#{accum[:start_time]}, #{accum[:chan]}, #{perc}, #{accum[:frame_count]}, #{accum[:retry_count]}\n"
+      unless accum[:ta].nil?
+        waited_perc = accum[:ta].inject(0){|memo, elm|
+          my_perc = elm[1][:retry_count].to_f / elm[1][:frame_count].to_f * 100.0
+          wait = elm[1][:frame_count].to_f / accum[:frame_count].to_f
+          memo += (my_perc * wait)
+        }
+        stas = accum[:ta].length
+      else
+        waited_perc = 0.0
+      end
+      print "#{accum[:start_time]}, #{accum[:chan]}, #{perc}, #{accum[:frame_count]}, #{accum[:retry_count]}, #{waited_perc}, #{stas}\n"
     end
 
     iteratee = Proc.new do |accum, hash|
@@ -1646,8 +1663,13 @@ class Pcap80211Analyzer
 
       case hash[:st]
       when 36,37,38,39,44,46,47
+        ta = hash[:ta]
         accum[:frame_count] += 1
         accum[:retry_count] += 1 if hash[:retry] == true
+        accum[:ta] = {} if accum[:ta].nil?
+        accum[:ta][ta] = {:frame_count => 0, :retry_count => 0} if accum[:ta][ta].nil?
+        accum[:ta][ta][:frame_count] += 1
+        accum[:ta][ta][:retry_count] += 1 if hash[:retry] == true
       end
 
       accum
@@ -1756,6 +1778,110 @@ class Pcap80211Analyzer
       print "#{sta}\n"
     end
   end
+
+  def execute_chan_data_frame_count
+    totaling = Proc.new do |accum|
+      total_count = accum[:data_count] || 0
+      puts "#{accum[:start_time]}, #{accum[:chan]}, #{total_count}"
+    end
+
+    iteratee = Proc.new do |accum, hash|
+      next accum if hash[:badfcs] == true
+
+      case hash[:st]
+      when 32,33,34,35,40,41,42,43 # data frame
+        next accum if hash[:retry] == true # no retry
+        accum[:data_count] = 0 if accum[:data_count].nil?
+        accum[:data_count] += 1
+      end
+
+      accum
+    end
+
+    iterate_chan totaling, iteratee
+  end
+
+  def execute_chan_data_n_ba_bit_frame_count
+    totaling = Proc.new do |accum|
+      total_count = 0
+      total_count += (accum[:data_count]  || 0)
+      total_count += (accum[:ba_hash].values.inject(:+) || 0) unless accum[:ba_hash].nil?
+      puts "#{accum[:start_time]}, #{accum[:chan]}, #{total_count}"
+    end
+
+    iteratee = Proc.new do |accum, hash|
+      next accum if hash[:badfcs] == true
+
+      case hash[:st]
+      when 25 # block ack
+        accum[:ba_hash] = {} if accum[:ba_hash].nil?
+        ta = hash[:ta]
+        ssn = hash[:ba_start]
+        ba_bm_popcount = BitUtils.popcount(hash[:ba_bm])
+        key = ta + ":" + ssn.to_s
+        accum[:ba_hash][key] = ba_bm_popcount
+      when 32,33,34,35,40,41,42,43 # data frame
+        next accum if hash[:retry] == true
+        accum[:data_count] = 0 if accum[:data_count].nil?
+        accum[:data_count] += 1
+      end
+
+      accum
+    end
+
+    iterate_chan totaling, iteratee
+  end
+
+  def execute_chan_ba_bit_frame_count
+    totaling = Proc.new do |accum|
+      total_count = 0
+      total_count += (accum[:ba_hash].values.inject(:+) || 0) unless accum[:ba_hash].nil?
+      puts "#{accum[:start_time]}, #{accum[:chan]}, #{total_count}"
+    end
+
+    iteratee = Proc.new do |accum, hash|
+      next accum if hash[:badfcs] == true
+
+      case hash[:st]
+      when 25 # block ack
+        accum[:ba_hash] = {} if accum[:ba_hash].nil?
+        ta = hash[:ta]
+        ssn = hash[:ba_start]
+        ba_bm_popcount = BitUtils.popcount(hash[:ba_bm])
+        key = ta + ":" + ssn.to_s
+        accum[:ba_hash][key] = ba_bm_popcount
+      end
+
+      accum
+    end
+
+    iterate_chan totaling, iteratee
+  end
+
+
+  #def execute_sta_rssi_variance
+  #  sta_hash = {}
+  #  tshark_radiotap_each do |hash|
+  #    signal = hash[:signal]
+  #    ta = hash[:ta]
+  #    sta_hash[ta] = [] if sta_hash[ta].nil?
+  #    sta_hash[ta] << signal
+  #  end
+
+  #  res_hash = sta_hash.map {|key, ary|
+  #    samples = ary.length
+  #    if samples == 0
+  #    end
+
+  #    min = ary.min
+  #    max = ary.max
+  #    avg = ary.inject(0.0) {|r,i} r+=i}/samples
+  #    med = (ary.length % 2 == 0 ? ary[ary.length/2 - 1, 2].inject(:+) / 2.0 : ary[ary.length/2])
+  #  }.to_h
+  #end
+
+  #def execute_ap_rssi_variance
+  #end
 end
 
 def usage
