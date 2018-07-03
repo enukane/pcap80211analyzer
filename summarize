@@ -156,6 +156,10 @@ class Summarizer
     do_graph(TYPE_PLOTCHAN, "chan_duration", nil, "datalen", {:row_idx => 6})
     do_graph(TYPE_PLOTCHAN, "chan_data_frame_count")
     do_graph(TYPE_PLOTCHAN, "chan_data_n_ba_bit_frame_count", "23__")
+    do_graph(TYPE_PLOTCHAN, "chan_mcast_frame_count", "70__", "mcastcnt", {:row_idx => 2})
+    do_graph(TYPE_PLOTCHAN, "chan_mcast_frame_count", "71__", "mcastrate", {:row_idx => 3})
+    do_graph(TYPE_PLOTCHAN, "chan_mcast_frame_count", "72__", "mcastduration", {:row_idx => 4})
+    do_graph(TYPE_PLOTCHAN, "chan_mcast_frame_count", "73__", "mcastcalcduration", {:row_idx => 5})
   end
 end
 

@@ -1,0 +1,27 @@
+#!/usr/bin/env ruby
+
+fname = ARGV.shift
+if fname == nil or File.exists?(fname) == false
+  STDERR.puts("no such file '#{fname}'")
+  exit 1
+end
+
+REG=/^ *\[(?<year>\d+)-(?<month>\d+)-(?<date>\d+) (?<hour>\d\d):(?<minute>\d\d):(?<secound>\d\d) \+0900\] .+utilization=(?<utilization>\d+\.\d+) uch=(?<channel>\d+)\)$/
+MERGE=60*2
+
+time_seq = {}
+
+File.open(fname) do |f|
+  while line = f.gets
+    match = line.strip.match(REG)
+    next unless match
+    time = Time.new(match[:year].to_i, match[:month].to_i, match[:date].to_i, match[:hour].to_i, match[:minute].to_i, match[:secound].to_i)
+    utilization = match[:utilization].to_f
+    channel = match[:channel].to_i
+
+    print "#{time.to_f}, #{channel}, #{utilization}\n"
+  end
+end
+
+
+

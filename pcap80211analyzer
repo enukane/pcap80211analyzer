@@ -337,6 +337,7 @@ class Pcap80211Analyzer
       return cached if cached
     end
 
+    STDERR.puts "tshark cache not found: renew one\n"
     io = IO.popen("tshark -E separator=, #{options} -T fields -r #{@pcappath}")
     data = io.read
 
@@ -1850,6 +1851,36 @@ class Pcap80211Analyzer
         ba_bm_popcount = BitUtils.popcount(hash[:ba_bm])
         key = ta + ":" + ssn.to_s
         accum[:ba_hash][key] = ba_bm_popcount
+      end
+
+      accum
+    end
+
+    iterate_chan totaling, iteratee
+  end
+
+  def execute_chan_mcast_frame_count
+    totaling = Proc.new do |accum|
+      rate = accum[:mcast_frame_count].to_f / accum[:frame_count] * 100
+      print "#{accum[:start_time]}, #{accum[:chan]}, #{accum[:mcast_frame_count]}, #{rate}, #{accum[:mcast_duration]}, #{accum[:mcast_calc_duration]}\n"
+    end
+
+    iteratee = Proc.new do |accum, hash|
+      accum[:frame_count] = 0 if accum[:frame_count].nil?
+      accum[:mcast_frame_count] = 0 if accum[:mcast_frame_count].nil?
+      accum[:mcast_duration] = 0 if accum[:mcast_duration].nil?
+      accum[:mcast_calc_duration] = 0 if accum[:mcast_calc_duration].nil?
+
+
+      if hash[:st] < 0x20 or 0x30 <= hash[:st]
+        next accum
+      end
+      accum[:frame_count] += 1
+
+      if hash[:ra].downcase == "ff:ff:ff:ff:ff:ff"
+        accum[:mcast_frame_count] += 1
+        accum[:mcast_duration] += hash[:duration]
+        accum[:mcast_calc_duration] += (hash[:framelen] - hash[:taplen]).to_f * 8 / hash[:rate]
       end
 
       accum
