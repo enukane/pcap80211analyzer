@@ -92,7 +92,7 @@ class Summarizer
       end
       Dir.mkdir(@name)
     end
-    unless system("./pcap80211analyzer -r #{@readfrom} -c #{@name} all_output_csv")
+    unless system("ruby -Ku ./pcap80211analyzer -r #{@readfrom} -c #{@name} all_output_csv")
       raise "failed to output csv"
     end
   end
